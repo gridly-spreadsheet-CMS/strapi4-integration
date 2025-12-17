@@ -1,0 +1,56 @@
+{
+  "kind": "collectionType",
+  "collectionName": "gridly_subprojects",
+  "info": {
+    "singularName": "gridly-subproject",
+    "pluralName": "gridly-subprojects",
+    "displayName": "Gridly Subproject"
+  },
+  "options": {
+    "draftAndPublish": false,
+    "comment": ""
+  },
+
+  "pluginOptions": {
+    "content-manager": { 
+      "visible": false
+    },
+
+    "content-type-builder": {
+      "visible": false
+    }
+  },
+
+  "attributes": {
+    "target-language": {
+      "type": "string",
+      "required": true
+    },
+    "progress": {
+      "type": "integer",
+      "default": 0
+    },
+    "number-of-records": {
+      "type": "integer",
+      "default": 0
+    },
+    "last-synch": {
+      "type": "timestamp"
+    },
+    "gridly-api-key": {
+      "type": "text",
+      "required": true,
+      "private": true
+    },
+    "gridly-view-id": {
+      "type": "string",
+      "required": true
+    },
+    "project": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::gridly-integration.gridly-project",
+      "inversedBy": "subprojects"
+    }
+  }
+} 

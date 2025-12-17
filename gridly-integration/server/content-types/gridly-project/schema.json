@@ -1,0 +1,99 @@
+{
+  "kind": "collectionType",
+  "collectionName": "gridly_projects",
+  "info": {
+    "singularName": "gridly-project",
+    "pluralName": "gridly-projects",
+    "displayName": "Gridly Project"
+  },
+  "options": {
+    "draftAndPublish": false,
+    "comment": ""
+  },
+
+  "pluginOptions": {
+    "content-manager": { 
+      "visible": false
+    },
+
+    "content-type-builder": {
+      "visible": false
+    }
+  },
+
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "maxLength": 40,
+      "minLength": 1,
+      "default": ""
+    },
+    "source-language": {
+      "type": "string",
+      "required": true
+    },
+    "creation-date": {
+      "type": "timestamp"
+    },
+    "subprojects": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "plugin::gridly-integration.gridly-subproject",
+      "mappedBy": "project"
+    },
+    "selected-content": {
+      "type": "json",
+      "default": []
+    },
+    "gridly-config-id": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::gridly-integration.gridly-config"
+    },
+    "targetLanguages": {
+      "type": "json",
+      "default": []
+    },
+    "last-sync": {
+      "type": "timestamp"
+    },
+    "sync-status": {
+      "type": "string",
+      "default": "not-synced"
+    },
+    "records-sent": {
+      "type": "integer",
+      "default": 0
+    },
+    "sync-error": {
+      "type": "text"
+    },
+    "total-records": {
+      "type": "integer",
+      "default": 0
+    },
+    "overall-progress": {
+      "type": "integer",
+      "default": 0
+    },
+    "last-progress-update": {
+      "type": "timestamp"
+    },
+    "last-import": {
+      "type": "timestamp"
+    },
+    "import-status": {
+      "type": "string",
+      "default": "not-imported"
+    },
+    "entries-imported": {
+      "type": "integer",
+      "default": 0
+    },
+    "import-error": {
+      "type": "text"
+    }
+  }
+}
