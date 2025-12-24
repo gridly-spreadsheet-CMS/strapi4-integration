@@ -125,8 +125,8 @@ module.exports = ({ strapi }) => ({
 
         console.log('📋 Found entry:', { id: entry.id, title: entry.Title || entry.title });
 
-        // Extract all translatable content
-        const translatableFields = this.extractAllTranslatableFields(entry);
+        // Extract all translatable content (excluding slug fields)
+        const translatableFields = this.extractAllTranslatableFields(entry, contentItem.contentTypeUid);
         console.log('📝 Extracted translatable fields:', translatableFields);
         
         if (translatableFields.length > 0) {
@@ -200,16 +200,47 @@ module.exports = ({ strapi }) => ({
   /**
    * Extract all translatable fields from an entry
    */
-  extractAllTranslatableFields(entry) {
+  extractAllTranslatableFields(entry, contentTypeUid) {
     const translatableFields = [];
     
-    // Common translatable field names (case-insensitive)
-    const titleFields = ['Title', 'title', 'name', 'Name', 'slug', 'Slug', 'headline', 'Headline', 'label', 'Label'];
+    // Fields that should never be translated (unique identifiers, slugs, etc.)
+    const excludedFields = ['slug', 'Slug', 'id', 'createdAt', 'updatedAt', 'publishedAt', 'locale', 'localizations'];
+    
+    // Get content type model to check field types
+    let contentTypeModel = null;
+    if (contentTypeUid) {
+      try {
+        contentTypeModel = strapi.getModel(contentTypeUid);
+      } catch (error) {
+        // Content type not found, continue without type checking
+      }
+    }
+    
+    // Helper to check if a field should be excluded
+    const shouldExcludeField = (fieldName) => {
+      // Check by name
+      if (excludedFields.includes(fieldName)) {
+        return true;
+      }
+      
+      // Check by field type (uid fields are typically slugs/unique identifiers)
+      if (contentTypeModel && contentTypeModel.attributes && contentTypeModel.attributes[fieldName]) {
+        const fieldType = contentTypeModel.attributes[fieldName].type;
+        if (fieldType === 'uid') {
+          return true;
+        }
+      }
+      
+      return false;
+    };
+    
+    // Common translatable field names (case-insensitive) - excluding slug
+    const titleFields = ['Title', 'title', 'name', 'Name', 'headline', 'Headline', 'label', 'Label'];
     const contentFields = ['Content', 'content', 'body', 'Body', 'description', 'Description', 'text', 'Text', 'summary', 'Summary'];
     
     // Check for title fields
     for (const fieldName of titleFields) {
-      if (entry[fieldName] && typeof entry[fieldName] === 'string' && entry[fieldName].trim().length > 0) {
+      if (!shouldExcludeField(fieldName) && entry[fieldName] && typeof entry[fieldName] === 'string' && entry[fieldName].trim().length > 0) {
         translatableFields.push({
           name: fieldName,
           value: entry[fieldName].trim(),
@@ -220,7 +251,7 @@ module.exports = ({ strapi }) => ({
     
     // Check for content fields
     for (const fieldName of contentFields) {
-      if (entry[fieldName]) {
+      if (!shouldExcludeField(fieldName) && entry[fieldName]) {
         if (Array.isArray(entry[fieldName])) {
           // Handle blocks content
           const textContent = this.extractTextFromBlocks(entry[fieldName]);
@@ -243,8 +274,8 @@ module.exports = ({ strapi }) => ({
     
     // Fallback: try to find any other string field that might be translatable
     for (const [key, value] of Object.entries(entry)) {
-      // Skip system fields and already processed fields
-      if (['id', 'createdAt', 'updatedAt', 'publishedAt', 'locale', 'localizations'].includes(key)) {
+      // Skip system fields and excluded fields
+      if (shouldExcludeField(key)) {
         continue;
       }
       
@@ -834,7 +865,7 @@ module.exports = ({ strapi }) => ({
           const result = await this.updateStrapiEntry(entryData);
           results.push(result);
         } catch (error) {
-          console.error(`❌ Error updating entry ${entryKey}:`, error);
+          console.error(`❌ Error updating entry ${entryKey}:`, error.message);
           results.push({
             success: false,
             entryKey,
@@ -876,7 +907,6 @@ module.exports = ({ strapi }) => ({
       const baseLocale = this.getCellValue(record, 'strapi_meta_base_locale');
 
       if (!strapiId || !contentType || !fieldName) {
-        console.warn('⚠️ Skipping record with missing metadata:', record.id);
         continue;
       }
 
@@ -905,14 +935,13 @@ module.exports = ({ strapi }) => ({
               entries[entryKey].translations[strapiLocale] = {};
             }
             
-            // Get field type from Gridly metadata (more accurate than schema detection)
+            // Get field type from Gridly metadata
             const gridlyFieldType = fieldType;
             
-            // Get actual field structure from API response mapping
-            const fieldStructure = this.getFieldStructureFromApi(contentType, strapiId);
-            const actualFieldType = fieldStructure[fieldName] || gridlyFieldType;
-            
-            console.log(`🔍 Field type mapping for ${fieldName}: Gridly=${gridlyFieldType}, Actual=${actualFieldType}`);
+            // Get actual field type from Strapi schema (more accurate than Gridly metadata)
+            // This will properly detect CKEditor, EditorJS, and other custom fields
+            const strapiFieldType = this.getFieldTypeFromStrapi(contentType, fieldName);
+            const actualFieldType = strapiFieldType || gridlyFieldType;
             
             // Store field type information for processing
             if (!entries[entryKey].fieldTypes) {
@@ -923,14 +952,11 @@ module.exports = ({ strapi }) => ({
             // Process the field value based on its actual type
             const processedValue = this.processFieldData(fieldName, cell.value, actualFieldType);
             entries[entryKey].translations[strapiLocale][fieldName] = processedValue;
-            
-            console.log(`📝 Grouped translation: ${entryKey} -> ${strapiLocale}.${fieldName} (${fieldType}) = "${cell.value}" -> processed`);
           }
         }
       }
     }
-
-    console.log('📋 Final grouped entries:', JSON.stringify(entries, null, 2));
+    
     return entries;
   },
 
@@ -1109,29 +1135,48 @@ module.exports = ({ strapi }) => ({
   },
 
   /**
+   * Check if an entry is published
+   */
+  async isEntryPublished(contentType, entryId) {
+    try {
+      const entry = await strapi.entityService.findOne(contentType, entryId, {
+        publicationState: 'preview' // Use preview to get both draft and published
+      });
+      return entry && entry.publishedAt !== null;
+    } catch (error) {
+      console.warn(`⚠️ Could not check publication status for ${contentType}:${entryId}:`, error.message);
+      return false;
+    }
+  },
+
+  /**
    * Update Strapi entry with translated content
    */
   async updateStrapiEntry(entryData) {
-    console.log(`🔄 Updating Strapi entry: ${entryData.contentType}_${entryData.strapiId}`);
-    console.log(`📋 Entry data:`, JSON.stringify(entryData, null, 2));
-
     const results = [];
 
     // Update each language
     for (const [locale, translations] of Object.entries(entryData.translations)) {
       try {
-        console.log(`🔄 Processing locale: ${locale} with translations:`, JSON.stringify(translations, null, 2));
-        
         if (locale === entryData.sourceLocale) {
           // Update the original entry
-          console.log(`📝 Updating original entry for locale: ${locale}`);
+          // Check if entry is published to update the correct version
+          const isPublished = await this.isEntryPublished(entryData.contentType, entryData.strapiId);
+          const updateOptions = {
+            data: translations
+          };
+          
+          // If published, update the published version, not just the draft
+          if (isPublished) {
+            updateOptions.publicationState = 'live';
+          }
+          
           const result = await strapi.entityService.update(
             entryData.contentType,
             entryData.strapiId,
-            {
-              data: translations
-            }
+            updateOptions
           );
+          
           results.push({
             success: true,
             locale,
@@ -1140,13 +1185,13 @@ module.exports = ({ strapi }) => ({
           });
         } else {
           // Create or update localization using Strapi i18n API
-          console.log(`📝 Creating/updating localization for locale: ${locale}`);
           const result = await this.createOrUpdateLocalization(
             entryData.contentType,
             entryData.strapiId,
             locale,
             translations
           );
+          
           results.push({
             success: true,
             locale,
@@ -1155,7 +1200,7 @@ module.exports = ({ strapi }) => ({
           });
         }
       } catch (error) {
-        console.error(`❌ Error updating ${locale} for entry ${entryData.strapiId}:`, error);
+        console.error(`❌ Error updating ${locale} for entry ${entryData.strapiId}:`, error.message);
         results.push({
           success: false,
           locale,
@@ -1176,11 +1221,6 @@ module.exports = ({ strapi }) => ({
    */
   async createOrUpdateLocalization(contentType, entryId, locale, data) {
     try {
-      console.log(`🔄 Creating/updating localization for ${contentType}:${entryId} in locale: ${locale}`);
-      
-      // Step 1: Check if localization already exists for this locale
-      console.log(`🔍 Step 1: Checking if localization exists for locale: ${locale}`);
-      
       // Get the original entry with its localizations
       const originalEntry = await strapi.entityService.findOne(contentType, entryId, {
         populate: {
@@ -1192,33 +1232,31 @@ module.exports = ({ strapi }) => ({
         throw new Error(`Original entry ${entryId} not found`);
       }
       
-      console.log(`📋 Original entry localizations:`, originalEntry.localizations?.map(l => ({ id: l.id, locale: l.locale })));
-      
       // Find if localization already exists for this locale
       const existingLocalization = originalEntry.localizations?.find(loc => loc.locale === locale);
       
       if (existingLocalization) {
-        console.log(`✅ Found existing localization: ${existingLocalization.id} for locale: ${locale}`);
-        
         // Step 2a: Update existing localization
-        console.log(`📝 Step 2a: Updating existing localization ${existingLocalization.id}`);
-        
-        const updatedLocalization = await strapi.entityService.update(contentType, existingLocalization.id, {
+        // Check if localization is published to update the correct version
+        const isPublished = await this.isEntryPublished(contentType, existingLocalization.id);
+        const updateOptions = {
           data: data
-        });
+        };
         
-        console.log(`✅ Updated existing localization: ${updatedLocalization.id}`);
+        // If published, update the published version, not just the draft
+        if (isPublished) {
+          updateOptions.publicationState = 'live';
+        }
+        
+        const updatedLocalization = await strapi.entityService.update(contentType, existingLocalization.id, updateOptions);
+        
         return {
           action: 'updated',
           entryId: updatedLocalization.id
         };
         
       } else {
-        console.log(`❌ No existing localization found for locale: ${locale}`);
-        
         // Step 2b: Create new localization with proper linking
-        console.log(`📝 Step 2b: Creating new localization for locale: ${locale}`);
-        
         // Get the original entry with current localizations
         const originalWithLocalizations = await strapi.entityService.findOne(contentType, entryId, {
           populate: {
@@ -1229,59 +1267,38 @@ module.exports = ({ strapi }) => ({
         // Get all existing localization IDs
         const existingLocalizationIds = originalWithLocalizations.localizations?.map(loc => loc.id) || [];
         
+        // Check if original entry is published - if so, publish the new localization too
+        const isOriginalPublished = await this.isEntryPublished(contentType, entryId);
+        const createData = {
+          ...data,
+          locale: locale,
+          localizations: [entryId, ...existingLocalizationIds] // Link to original and existing localizations
+        };
+        
+        // If original is published, publish the new localization immediately
+        if (isOriginalPublished) {
+          createData.published_at = new Date();
+        }
+        
         // Create the new localization with the localizations field already set
         const newLocalization = await strapi.entityService.create(contentType, {
-          data: {
-            ...data,
-            locale: locale,
-            published_at: new Date(),
-            localizations: [entryId, ...existingLocalizationIds] // Link to original and existing localizations
-          }
+          data: createData
         });
         
-        console.log(`✅ Created new localization: ${newLocalization.id} with localizations: [${entryId}, ${existingLocalizationIds.join(', ')}]`);
-        
         // Update the original entry to include the new localization using query
-        console.log(`🔗 Updating original entry ${entryId} with localizations: [${existingLocalizationIds.join(', ')}, ${newLocalization.id}]`);
         await strapi.query(contentType).update({
           where: { id: entryId },
           data: { localizations: [...existingLocalizationIds, newLocalization.id] }
         });
         
-        console.log(`✅ Updated original entry ${entryId} with new localization: ${newLocalization.id}`);
-        
         // Update all existing localizations to include the new one
         for (const existingId of existingLocalizationIds) {
           const otherLocalizationIds = existingLocalizationIds.filter(id => id !== existingId);
-          console.log(`🔗 Updating existing localization ${existingId} with localizations: [${entryId}, ${otherLocalizationIds.join(', ')}, ${newLocalization.id}]`);
           await strapi.query(contentType).update({
             where: { id: existingId },
             data: { localizations: [entryId, ...otherLocalizationIds, newLocalization.id] }
           });
         }
-        
-        console.log(`✅ Successfully linked all localizations for entry ${entryId}`);
-        
-        // Verify the linking worked by querying the database directly
-        console.log(`🔍 Verifying localization linking...`);
-        const verifyOriginal = await strapi.query(contentType).findOne({
-          where: { id: entryId },
-          populate: {
-            localizations: true
-          }
-        });
-        
-        console.log(`📋 Verification - Original entry localizations:`, verifyOriginal.localizations?.map(l => ({ id: l.id, locale: l.locale })));
-        
-        // Also verify the new localization was created correctly
-        const verifyNewLocalization = await strapi.query(contentType).findOne({
-          where: { id: newLocalization.id },
-          populate: {
-            localizations: true
-          }
-        });
-        
-        console.log(`📋 Verification - New localization ${newLocalization.id} localizations:`, verifyNewLocalization.localizations?.map(l => ({ id: l.id, locale: l.locale })));
         
         return {
           action: 'created',
@@ -1290,7 +1307,7 @@ module.exports = ({ strapi }) => ({
       }
       
     } catch (error) {
-      console.error(`❌ Error creating/updating localization for ${locale}:`, error);
+      console.error(`❌ Error creating/updating localization for ${locale} (${contentType}:${entryId}):`, error.message);
       throw error;
     }
   },
@@ -1307,18 +1324,21 @@ module.exports = ({ strapi }) => ({
       }
       
       const field = model.attributes[fieldName];
-      /*console.log(`🔍 Strapi field info for ${fieldName}:`, {
-        type: field.type,
-        component: field.component,
-        customField: field.customField,
-        target: field.target,
-        relation: field.relation
-      });*/
+      
+      // Check for CKEditor fields - these store HTML as strings, not blocks
+      if (field.customField === 'plugin::ckeditor5.CKEditor' || 
+          field.customField === 'plugin::ckeditor.CKEditor') {
+        return 'ckeditor';
+      }
+      
+      // Check for EditorJS fields - these use blocks format
+      if (field.customField === 'plugin::editorjs.editorjs') {
+        return 'richtext';
+      }
       
       // Check for rich text fields - multiple ways Strapi can define them
       if (field.type === 'richtext' || 
           field.component === 'default.richtext' || 
-          field.customField === 'plugin::editorjs.editorjs' ||
           field.type === 'blocks' ||
           (field.type === 'json' && fieldName.toLowerCase().includes('content'))) {
         return 'richtext';
@@ -1369,34 +1389,31 @@ module.exports = ({ strapi }) => ({
    * Process field data based on its type (rich text, simple text, etc.)
    */
   processFieldData(fieldName, fieldValue, fieldType) {
-    console.log(`🔧 Processing field: ${fieldName}, type: ${fieldType}, value:`, fieldValue);
-    
     switch (fieldType) {
       case 'title':
       case 'text':
       case 'string':
         // Simple text fields - just return the string value
-        console.log(`📝 Simple text field: ${fieldName} = "${fieldValue}"`);
         return fieldValue;
+        
+      case 'ckeditor':
+        // CKEditor fields store HTML as strings - keep as string, don't convert to blocks
+        return fieldValue; // CKEditor expects HTML string, not blocks
         
       case 'richtext':
       case 'blocks':
-        // Rich text fields - convert string to Strapi's rich text format
-        console.log(`📝 Rich text field: ${fieldName} - converting to blocks format`);
+        // Rich text fields (EditorJS, Strapi blocks) - convert string to Strapi's rich text format
         return this.convertToRichTextBlocks(fieldValue);
         
       case 'content':
-        // Legacy support for 'content' type
-        console.log(`📝 Content field: ${fieldName} - converting to blocks format`);
+        // Legacy support for 'content' type - default to blocks format
         return this.convertToRichTextBlocks(fieldValue);
         
       default:
         // For unknown types, try to determine based on field name
         if (fieldName.toLowerCase().includes('content') || fieldName.toLowerCase().includes('body')) {
-          console.log(`📝 Detected rich text field by name: ${fieldName} - converting to blocks format`);
           return this.convertToRichTextBlocks(fieldValue);
         } else {
-          console.log(`📝 Unknown field type: ${fieldType} for ${fieldName} = "${fieldValue}"`);
           return fieldValue;
         }
     }

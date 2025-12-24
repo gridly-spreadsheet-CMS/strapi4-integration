@@ -23,9 +23,22 @@ module.exports = ({ strapi }) => {
   const getTranslatableFields = (attributes) => {
     const translatableFields = [];
     
+    // Fields that should never be translated (unique identifiers, slugs, etc.)
+    const excludedFieldNames = ['slug', 'Slug'];
+    
     for (const [fieldName, fieldConfig] of Object.entries(attributes)) {
       // Skip system fields and relations
       if (['id', 'createdAt', 'updatedAt', 'publishedAt', 'createdBy', 'updatedBy', 'publishedBy'].includes(fieldName)) {
+        continue;
+      }
+      
+      // Skip slug fields by name
+      if (excludedFieldNames.includes(fieldName)) {
+        continue;
+      }
+      
+      // Skip uid fields (typically slugs/unique identifiers)
+      if (fieldConfig.type === 'uid') {
         continue;
       }
       
@@ -175,10 +188,25 @@ module.exports = ({ strapi }) => {
         if (entry) {
           // Process each field that needs translation
           if (contentItem.fields && Array.isArray(contentItem.fields)) {
-            // Use predefined fields from contentItem
+            // Use predefined fields from contentItem, but exclude slug fields
             for (const field of contentItem.fields) {
               if (!field.name) {
                 continue;
+              }
+              
+              // Skip slug fields (by name or type)
+              const fieldName = field.name.toLowerCase();
+              if (fieldName === 'slug' || field.type === 'uid') {
+                continue;
+              }
+              
+              // Also check the actual field type from schema
+              const contentType = strapi.contentTypes[contentItem.contentTypeUid];
+              if (contentType && contentType.attributes && contentType.attributes[field.name]) {
+                const actualFieldType = contentType.attributes[field.name].type;
+                if (actualFieldType === 'uid') {
+                  continue;
+                }
               }
               
               const fieldValue = entry[field.name];
