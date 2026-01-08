@@ -313,16 +313,36 @@ module.exports = ({ strapi }) => ({
    * Extract text from rich text blocks
    */
   extractTextFromBlocks(blocks) {
-    if (!Array.isArray(blocks)) return '';
+    if (!blocks) return '';
+    
+    // If it's a string, try to parse it as JSON first
+    let parsedBlocks = blocks;
+    if (typeof blocks === 'string') {
+      try {
+        parsedBlocks = JSON.parse(blocks);
+      } catch (e) {
+        // If parsing fails, return the string as-is
+        return blocks;
+      }
+    }
+    
+    if (!Array.isArray(parsedBlocks)) return '';
 
     const texts = [];
     
-    for (const block of blocks) {
-      if (block.type === 'paragraph' && block.children) {
-        for (const child of block.children) {
-          if (child.type === 'text' && child.text) {
-            texts.push(child.text);
+    for (const block of parsedBlocks) {
+      if (block && typeof block === 'object') {
+        // Handle paragraph blocks with children
+        if (block.type === 'paragraph' && block.children && Array.isArray(block.children)) {
+          for (const child of block.children) {
+            if (child && child.type === 'text' && child.text) {
+              texts.push(child.text);
+            }
           }
+        }
+        // Handle blocks with direct text property
+        else if (block.text) {
+          texts.push(block.text);
         }
       }
     }
@@ -941,7 +961,15 @@ module.exports = ({ strapi }) => ({
             // Get actual field type from Strapi schema (more accurate than Gridly metadata)
             // This will properly detect CKEditor, EditorJS, and other custom fields
             const strapiFieldType = this.getFieldTypeFromStrapi(contentType, fieldName);
-            const actualFieldType = strapiFieldType || gridlyFieldType;
+            
+            // If Gridly metadata says it's 'text' or 'string', prioritize that to keep it as a string
+            // This prevents converting text fields to blocks format
+            let actualFieldType;
+            if (gridlyFieldType === 'text' || gridlyFieldType === 'string') {
+              actualFieldType = gridlyFieldType; // Keep as string, don't convert to blocks
+            } else {
+              actualFieldType = strapiFieldType || gridlyFieldType;
+            }
             
             // Store field type information for processing
             if (!entries[entryKey].fieldTypes) {
@@ -949,8 +977,19 @@ module.exports = ({ strapi }) => ({
             }
             entries[entryKey].fieldTypes[fieldName] = actualFieldType;
             
+            // Debug: Log the raw value and field type
+            console.log(`🔍 Processing field ${fieldName}:`);
+            console.log(`   Raw value type: ${typeof cell.value}, isArray: ${Array.isArray(cell.value)}`);
+            console.log(`   Raw value:`, JSON.stringify(cell.value).substring(0, 200));
+            console.log(`   Gridly field type: ${gridlyFieldType}`);
+            console.log(`   Strapi field type: ${strapiFieldType}`);
+            console.log(`   Actual field type (used): ${actualFieldType}`);
+            
             // Process the field value based on its actual type
             const processedValue = this.processFieldData(fieldName, cell.value, actualFieldType);
+            console.log(`   Processed value type: ${typeof processedValue}, isArray: ${Array.isArray(processedValue)}`);
+            console.log(`   Processed value:`, JSON.stringify(processedValue).substring(0, 200));
+            
             entries[entryKey].translations[strapiLocale][fieldName] = processedValue;
           }
         }
@@ -1185,6 +1224,13 @@ module.exports = ({ strapi }) => ({
           });
         } else {
           // Create or update localization using Strapi i18n API
+          console.log(`\n📝 Creating/updating localization for ${locale}:`);
+          console.log(`   Content Type: ${entryData.contentType}`);
+          console.log(`   Entry ID: ${entryData.strapiId}`);
+          console.log(`   Locale: ${locale}`);
+          console.log(`   Translation Fields:`, Object.keys(translations));
+          console.log(`   Translation Data:`, JSON.stringify(translations, null, 2));
+          
           const result = await this.createOrUpdateLocalization(
             entryData.contentType,
             entryData.strapiId,
@@ -1200,7 +1246,28 @@ module.exports = ({ strapi }) => ({
           });
         }
       } catch (error) {
-        console.error(`❌ Error updating ${locale} for entry ${entryData.strapiId}:`, error.message);
+        console.error(`\n❌ [ERROR] Failed to update ${locale} for entry ${entryData.strapiId}:`);
+        console.error(`   Content Type: ${entryData.contentType}`);
+        console.error(`   Entry ID: ${entryData.strapiId}`);
+        console.error(`   Locale: ${locale}`);
+        console.error(`   Error Message: ${error.message}`);
+        
+        // Log validation errors if available
+        if (error.details && error.details.errors) {
+          console.error(`   Validation Errors:`);
+          error.details.errors.forEach((err, index) => {
+            console.error(`     ${index + 1}. ${err.path || 'unknown'}: ${err.message || err}`);
+          });
+        }
+        
+        // Log full error details for debugging
+        if (error.details) {
+          console.error(`   Full Error Details:`, JSON.stringify(error.details, null, 2));
+        }
+        
+        console.error(`   Error Stack:`, error.stack);
+        console.error(`\n`);
+        
         results.push({
           success: false,
           locale,
@@ -1239,8 +1306,11 @@ module.exports = ({ strapi }) => ({
         // Step 2a: Update existing localization
         // Check if localization is published to update the correct version
         const isPublished = await this.isEntryPublished(contentType, existingLocalization.id);
+        
+        // Exclude slug from data - slugs should be set by users when creating posts, not modified during translation import
+        const { slug, ...dataWithoutSlug } = data;
         const updateOptions = {
-          data: data
+          data: dataWithoutSlug
         };
         
         // If published, update the published version, not just the draft
@@ -1248,12 +1318,30 @@ module.exports = ({ strapi }) => ({
           updateOptions.publicationState = 'live';
         }
         
-        const updatedLocalization = await strapi.entityService.update(contentType, existingLocalization.id, updateOptions);
-        
-        return {
-          action: 'updated',
-          entryId: updatedLocalization.id
-        };
+        try {
+          const updatedLocalization = await strapi.entityService.update(contentType, existingLocalization.id, updateOptions);
+          return {
+            action: 'updated',
+            entryId: updatedLocalization.id
+          };
+        } catch (updateError) {
+          console.error(`\n❌ [UPDATE ERROR] Failed to update existing localization:`);
+          console.error(`   Content Type: ${contentType}`);
+          console.error(`   Localization ID: ${existingLocalization.id}`);
+          console.error(`   Locale: ${locale}`);
+          console.error(`   Update Data:`, JSON.stringify(data, null, 2));
+          console.error(`   Update Options:`, JSON.stringify(updateOptions, null, 2));
+          if (updateError.details && updateError.details.errors) {
+            console.error(`   Validation Errors:`);
+            updateError.details.errors.forEach((err, index) => {
+              console.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
+              if (err.values) {
+                console.error(`        Values:`, err.values);
+              }
+            });
+          }
+          throw updateError;
+        }
         
       } else {
         // Step 2b: Create new localization with proper linking
@@ -1269,11 +1357,42 @@ module.exports = ({ strapi }) => ({
         
         // Check if original entry is published - if so, publish the new localization too
         const isOriginalPublished = await this.isEntryPublished(contentType, entryId);
+        
+        // Exclude slug from data - we'll generate it from title for new localizations
+        const { slug, ...dataWithoutSlug } = data;
         const createData = {
-          ...data,
+          ...dataWithoutSlug,
           locale: locale,
           localizations: [entryId, ...existingLocalizationIds] // Link to original and existing localizations
         };
+        
+        // Generate slug from title for new localization (required by Strapi even if targetField is set)
+        // This is only for new localizations, not updates - slugs should remain as set by users
+        // Add entry ID and random suffix to ensure uniqueness since multiple entries can have the same title
+        if (createData.title) {
+          // Check if slug field exists and is required in the schema
+          try {
+            const model = strapi.getModel(contentType);
+            if (model && model.attributes && model.attributes.slug) {
+              // Generate slug from title
+              const baseSlug = this.generateSlugFromTitle(createData.title);
+              // Generate a short random string (6 characters) to ensure uniqueness
+              const randomSuffix = Math.random().toString(36).substring(2, 8);
+              // Combine: baseSlug-entryId-locale-randomSuffix to ensure uniqueness
+              const uniqueSlug = `${baseSlug}-${entryId}-${locale}-${randomSuffix}`;
+              createData.slug = uniqueSlug;
+            }
+          } catch (e) {
+            // If we can't check the model, try to generate slug anyway
+            const baseSlug = this.generateSlugFromTitle(createData.title);
+            if (baseSlug) {
+              // Generate a short random string to ensure uniqueness
+              const randomSuffix = Math.random().toString(36).substring(2, 8);
+              // Add entry ID, locale, and random suffix to make it unique
+              createData.slug = `${baseSlug}-${entryId}-${locale}-${randomSuffix}`;
+            }
+          }
+        }
         
         // If original is published, publish the new localization immediately
         if (isOriginalPublished) {
@@ -1281,33 +1400,80 @@ module.exports = ({ strapi }) => ({
         }
         
         // Create the new localization with the localizations field already set
-        const newLocalization = await strapi.entityService.create(contentType, {
-          data: createData
-        });
-        
-        // Update the original entry to include the new localization using query
-        await strapi.query(contentType).update({
-          where: { id: entryId },
-          data: { localizations: [...existingLocalizationIds, newLocalization.id] }
-        });
-        
-        // Update all existing localizations to include the new one
-        for (const existingId of existingLocalizationIds) {
-          const otherLocalizationIds = existingLocalizationIds.filter(id => id !== existingId);
-          await strapi.query(contentType).update({
-            where: { id: existingId },
-            data: { localizations: [entryId, ...otherLocalizationIds, newLocalization.id] }
+        try {
+          const newLocalization = await strapi.entityService.create(contentType, {
+            data: createData
           });
-        }
         
-        return {
-          action: 'created',
-          entryId: newLocalization.id
-        };
+          // Update the original entry to include the new localization using query
+          await strapi.query(contentType).update({
+            where: { id: entryId },
+            data: { localizations: [...existingLocalizationIds, newLocalization.id] }
+          });
+          
+          // Update all existing localizations to include the new one
+          for (const existingId of existingLocalizationIds) {
+            const otherLocalizationIds = existingLocalizationIds.filter(id => id !== existingId);
+            await strapi.query(contentType).update({
+              where: { id: existingId },
+              data: { localizations: [entryId, ...otherLocalizationIds, newLocalization.id] }
+            });
+          }
+          
+          return {
+            action: 'created',
+            entryId: newLocalization.id
+          };
+        } catch (createError) {
+          console.error(`\n❌ [CREATE ERROR] Failed to create new localization:`);
+          console.error(`   Content Type: ${contentType}`);
+          console.error(`   Original Entry ID: ${entryId}`);
+          console.error(`   Locale: ${locale}`);
+          console.error(`   Create Data:`, JSON.stringify(createData, null, 2));
+          if (createError.details && createError.details.errors) {
+            console.error(`   Validation Errors:`);
+            createError.details.errors.forEach((err, index) => {
+              console.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
+              if (err.values) {
+                console.error(`        Values:`, err.values);
+              }
+            });
+          }
+          throw createError;
+        }
       }
       
     } catch (error) {
-      console.error(`❌ Error creating/updating localization for ${locale} (${contentType}:${entryId}):`, error.message);
+      console.error(`\n❌ [ERROR] Failed to create/update localization for ${locale}:`);
+      console.error(`   Content Type: ${contentType}`);
+      console.error(`   Entry ID: ${entryId}`);
+      console.error(`   Locale: ${locale}`);
+      console.error(`   Error Message: ${error.message}`);
+      
+      // Log validation errors if available
+      if (error.details && error.details.errors) {
+        console.error(`   Validation Errors:`);
+        error.details.errors.forEach((err, index) => {
+          console.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
+          if (err.values) {
+            console.error(`        Values:`, err.values);
+          }
+        });
+      }
+      
+      // Log the data that was being sent (for debugging)
+      if (data) {
+        console.error(`   Data being sent:`, JSON.stringify(data, null, 2));
+      }
+      
+      // Log full error details for debugging
+      if (error.details) {
+        console.error(`   Full Error Details:`, JSON.stringify(error.details, null, 2));
+      }
+      
+      console.error(`   Error Stack:`, error.stack);
+      console.error(`\n`);
+      
       throw error;
     }
   },
@@ -1393,11 +1559,22 @@ module.exports = ({ strapi }) => ({
       case 'title':
       case 'text':
       case 'string':
-        // Simple text fields - just return the string value
+        // Simple text fields - if value is already a string, return it
+        // If it's an array (blocks format), convert to string
+        if (typeof fieldValue === 'string') {
+          return fieldValue;
+        } else if (Array.isArray(fieldValue)) {
+          // Convert blocks array to plain text string
+          return this.extractTextFromBlocks(fieldValue);
+        }
         return fieldValue;
         
       case 'ckeditor':
         // CKEditor fields store HTML as strings - keep as string, don't convert to blocks
+        // If value is an array, convert to string
+        if (Array.isArray(fieldValue)) {
+          return this.extractTextFromBlocks(fieldValue);
+        }
         return fieldValue; // CKEditor expects HTML string, not blocks
         
       case 'richtext':
@@ -1417,6 +1594,25 @@ module.exports = ({ strapi }) => ({
           return fieldValue;
         }
     }
+  },
+
+  /**
+   * Generate a slug from a title string (for new localizations only)
+   * This is needed because Strapi's i18n plugin requires slug even if targetField is set
+   */
+  generateSlugFromTitle(title) {
+    if (!title || typeof title !== 'string') {
+      return '';
+    }
+    
+    // Simple slug generation: lowercase, replace spaces and special chars with hyphens
+    return title
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '') // Remove special characters except hyphens
+      .replace(/[\s_]+/g, '-')   // Replace spaces and underscores with hyphens
+      .replace(/-+/g, '-')       // Replace multiple hyphens with single hyphen
+      .replace(/^-+|-+$/g, '');  // Remove leading/trailing hyphens
   },
 
   /**
