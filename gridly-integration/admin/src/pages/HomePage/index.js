@@ -4,7 +4,7 @@
  *
  */
 
-import React, { memo, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LoadingIndicatorPage } from "@strapi/helper-plugin";
 import { Layout, BaseHeaderLayout, ContentLayout } from '@strapi/design-system/Layout';
 import { EmptyStateLayout } from "@strapi/design-system/EmptyStateLayout";
@@ -14,10 +14,8 @@ import { Box } from "@strapi/design-system/Box";
 import Plus from "@strapi/icons/Plus";
 import { Illo } from "../../components/Illo";
 import ProjectModal from "../../components/ProjectModal";
-import { nanoid } from 'nanoid';
 import ProjectCount from '../../components/ProjectCount';
 import ProjectTable from '../../components/ProjectTable';
-import ConfigModal from "../../components/ConfigModal";
 import ConfigurationsModal from "../../components/ConfigurationsModal";
 import SyncNotification from "../../components/SyncNotification";
 import projectRequests from "../../api/gridly-integration.js";

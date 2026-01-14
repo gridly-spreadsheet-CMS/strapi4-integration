@@ -16,7 +16,6 @@ import {
 } from "@strapi/design-system";
 import projectRequests from "../../api/gridly-integration.js";
 import ContentSelector from "../ContentSelector";
-import { useError } from "../../contexts/ErrorContext.js";
 
 export default function ProjectModal({ setShowModal, addProject, editProject, projectToEdit }) {
   const [name, setName] = useState("");
@@ -31,9 +30,6 @@ export default function ProjectModal({ setShowModal, addProject, editProject, pr
   const [isEditMode, setIsEditMode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState(null);
-  
-  // Error handling
-  const { handleApiError } = useError();
 
   const handleSubmit = async (e) => {
     // Prevent submitting parent form

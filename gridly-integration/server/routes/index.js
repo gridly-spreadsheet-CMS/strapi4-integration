@@ -5,6 +5,9 @@ module.exports = [
     handler: 'myController.index',
     config: {
       policies: [],
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -13,7 +16,9 @@ module.exports = [
     handler: 'project.find',
     config: {
       policies: [],
-      auth: false
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -22,7 +27,9 @@ module.exports = [
     handler: 'project.find',
     config: {
       policies: [],
-      auth: false
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -31,7 +38,9 @@ module.exports = [
     handler: 'project.findOne',
     config: {
       policies: [],
-      auth: false
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -40,7 +49,9 @@ module.exports = [
     handler: 'project.create',
     config: {
       policies: [],
-      auth: false
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -49,7 +60,9 @@ module.exports = [
     handler: 'project.delete',
     config: {
       policies: [],
-      auth: false
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -58,7 +71,9 @@ module.exports = [
     handler: 'project.update',
     config: {
       policies: [],
-      auth: false
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -67,7 +82,9 @@ module.exports = [
     handler: 'project.updateExistingProjectsWithConfig',
     config: {
       policies: [],
-      auth: false
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -76,7 +93,9 @@ module.exports = [
     handler: 'project.getLanguages',
     config: {
       policies: [],
-      auth: false
+      auth: {
+        scope: ['admin::is-authenticated']
+      }
     },
   },
   {
@@ -215,17 +234,6 @@ module.exports = [
     method: 'POST',
     path: '/gridly-configs/:configId/validate-dependencies',
     handler: 'project.validateGridlyDependencies',
-    config: {
-      policies: [],
-      auth: {
-        scope: ['admin::is-authenticated']
-      }
-    },
-  },
-  {
-    method: 'POST',
-    path: '/cleanup-duplicate-entries',
-    handler: 'project.cleanupDuplicateEntries',
     config: {
       policies: [],
       auth: {

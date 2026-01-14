@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import projectRequests from '../api/gridly-integration.js';
 
 export const useProjectUpdates = (initialProjects = []) => {

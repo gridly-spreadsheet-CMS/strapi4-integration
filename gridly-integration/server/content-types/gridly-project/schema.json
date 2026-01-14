@@ -63,6 +63,9 @@
       "type": "string",
       "default": "not-synced"
     },
+    "sync-started-at": {
+      "type": "timestamp"
+    },
     "records-sent": {
       "type": "integer",
       "default": 0

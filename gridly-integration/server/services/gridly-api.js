@@ -1,20 +1,37 @@
 'use strict';
 
 const axios = require('axios');
+const crypto = require('crypto');
 
-module.exports = ({ strapi }) => ({
+module.exports = ({ strapi }) => {
+  // Get logger service
+  const logger = strapi.plugin('gridly-integration').service('logger');
+
+  /**
+   * Generate a cryptographically secure random string for slug suffix
+   * Uses Node.js crypto module to avoid collisions
+   * Returns a URL-safe hex string (0-9a-f)
+   */
+  const generateSecureRandomSuffix = (length = 6) => {
+    // Generate cryptographically secure random bytes and convert to hex
+    // Hex encoding provides URL-safe characters (0-9a-f) and better collision resistance
+    const bytes = crypto.randomBytes(Math.ceil(length / 2));
+    return bytes.toString('hex').substring(0, length);
+  };
+
+  return {
   /**
    * Send content to Gridly for translation
    */
   async sendContentToGridly(gridlyConfig, selectedContent, sourceLanguage) {
     try {
-      console.log('🚀 Starting Gridly API call...');
-      console.log('📋 Gridly config:', { 
+      logger.debug('Starting Gridly API call...');
+      logger.debug('Gridly config:', { 
         hasApiKey: !!gridlyConfig['gridly-api-key'], 
         viewId: gridlyConfig['gridly-view-id'] 
       });
-      console.log('📋 Selected content:', selectedContent);
-      console.log('🌍 Source language:', sourceLanguage);
+      logger.debug('Selected content:', selectedContent);
+      logger.info('Source language:', sourceLanguage);
       
       const { 'gridly-api-key': apiKey, 'gridly-view-id': viewId } = gridlyConfig;
       
@@ -23,12 +40,11 @@ module.exports = ({ strapi }) => ({
       }
 
       // Get content entries for the selected content
-      console.log('🔄 Preparing Gridly records...');
+      logger.info('Preparing Gridly records...');
       const records = await this.prepareGridlyRecords(selectedContent, sourceLanguage);
-      //console.log('📋 Prepared records:', records);
       
       // Send to Gridly API in batches (max 1000 records per request)
-      console.log('📤 Sending to Gridly API...');
+      logger.info('Sending to Gridly API...');
       const batchSize = 1000;
       const batches = [];
       
@@ -36,11 +52,11 @@ module.exports = ({ strapi }) => ({
         batches.push(records.slice(i, i + batchSize));
       }
       
-      console.log(`📦 Sending ${batches.length} batch(es) of records...`);
+      logger.info(`Sending ${batches.length} batch(es) of records...`);
       
       const responses = [];
       for (let i = 0; i < batches.length; i++) {
-        console.log(`📤 Sending batch ${i + 1}/${batches.length} with ${batches[i].length} records...`);
+        logger.debug(`Sending batch ${i + 1}/${batches.length} with ${batches[i].length} records...`);
         const response = await axios.post(
           `https://api.gridly.com/v1/views/${viewId}/records`,
           batches[i],
@@ -54,7 +70,7 @@ module.exports = ({ strapi }) => ({
         responses.push(response.data);
       }
 
-      //console.log('✅ Gridly API responses:', responses);
+      logger.debug('Gridly API responses received');
 
       return {
         success: true,
@@ -62,14 +78,14 @@ module.exports = ({ strapi }) => ({
         recordsCount: records.length
       };
     } catch (error) {
-      console.error('❌ Error sending content to Gridly:', error);
+      logger.error('Error sending content to Gridly:', error);
       
       // Extract the actual error message from Gridly API response
       let errorMessage = 'Unknown error occurred';
       let errorDetails = null;
       
       if (error.response?.data) {
-        console.error('❌ Gridly API error response:', error.response.data);
+        logger.error('Gridly API error response:', error.response.data);
         errorDetails = error.response.data;
         
         // Try to extract meaningful error message from Gridly response
@@ -88,7 +104,7 @@ module.exports = ({ strapi }) => ({
         errorMessage = error.message;
       }
       
-      console.error('❌ Final error message:', errorMessage);
+      logger.error('Final error message:', errorMessage);
       
       return {
         success: false,
@@ -102,12 +118,12 @@ module.exports = ({ strapi }) => ({
    * Prepare records for Gridly API with enhanced metadata for bidirectional sync
    */
   async prepareGridlyRecords(selectedContent, sourceLanguage) {
-    console.log('🔄 Starting to prepare Gridly records...');
+    logger.debug('Starting to prepare Gridly records...');
     const records = [];
     
     for (const contentItem of selectedContent) {
       try {
-        console.log('📋 Processing content item:', contentItem);
+        logger.debug('Processing content item:', contentItem);
         
         // Get the content entry from Strapi
         const entry = await strapi.entityService.findOne(
@@ -119,15 +135,15 @@ module.exports = ({ strapi }) => ({
         );
 
         if (!entry) {
-          console.warn(`⚠️ Entry not found: ${contentItem.contentTypeUid}:${contentItem.itemId}`);
+          logger.warn(`Entry not found: ${contentItem.contentTypeUid}:${contentItem.itemId}`);
           continue;
         }
 
-        console.log('📋 Found entry:', { id: entry.id, title: entry.Title || entry.title });
+        logger.debug('Found entry:', { id: entry.id, title: entry.Title || entry.title });
 
         // Extract all translatable content (excluding slug fields)
         const translatableFields = this.extractAllTranslatableFields(entry, contentItem.contentTypeUid);
-        console.log('📝 Extracted translatable fields:', translatableFields);
+        logger.debug('Extracted translatable fields:', translatableFields);
         
         if (translatableFields.length > 0) {
           // Create a record for each translatable field
@@ -182,18 +198,17 @@ module.exports = ({ strapi }) => ({
               ]
             };
             
-            //console.log('📋 Created record for field:', field.name, record);
             records.push(record);
           }
         } else {
-          console.warn('⚠️ No translatable content found for entry:', entry.id);
+          logger.warn('No translatable content found for entry:', entry.id);
         }
       } catch (error) {
-        console.error(`❌ Error processing content item:`, contentItem, error);
+        logger.error(`Error processing content item:`, contentItem, error);
       }
     }
 
-    console.log('✅ Total records prepared:', records.length);
+    logger.info(`Total records prepared: ${records.length}`);
     return records;
   },
 
@@ -382,7 +397,7 @@ module.exports = ({ strapi }) => ({
       let errorDetails = null;
       
       if (error.response?.data) {
-        console.error('❌ Gridly API error response:', error.response.data);
+        logger.error('Gridly API error response:', error.response.data);
         errorDetails = error.response.data;
         
         // Try to extract meaningful error message from Gridly response
@@ -433,9 +448,9 @@ module.exports = ({ strapi }) => ({
       // The view response should include columns information
       return response.data.columns || [];
     } catch (error) {
-      console.error('Error getting Gridly view structure:', error);
+      logger.error('Error getting Gridly view structure:', error);
       // If we can't get columns, return empty array and continue
-      console.warn('Could not fetch Gridly view structure, proceeding without column validation');
+      logger.warn('Could not fetch Gridly view structure, proceeding without column validation');
       return [];
     }
   },
@@ -445,7 +460,7 @@ module.exports = ({ strapi }) => ({
    */
   async validateAndCreateMetadataColumns(gridlyConfig, sourceLanguage, targetLanguages, includeDependencies = true) {
     try {
-      console.log('🔍 Validating Gridly view columns...');
+      logger.debug('Validating Gridly view columns...');
       
       const { 'gridly-api-key': apiKey, 'gridly-view-id': viewId } = gridlyConfig;
       
@@ -455,12 +470,12 @@ module.exports = ({ strapi }) => ({
 
       // Get current view structure
       const columns = await this.getGridlyViewStructure(gridlyConfig);
-      console.log('📋 Current columns:', columns.map(col => ({ id: col.id, name: col.name })));
+      logger.debug('Current columns:', columns.map(col => ({ id: col.id, name: col.name })));
 
       // Get available languages from Strapi
       const i18nService = strapi.plugin("gridly-integration").service("i18n");
       const availableLocales = await i18nService.getLocalesWithInfo();
-      console.log('📋 Available Strapi locales:', availableLocales);
+      logger.debug('Available Strapi locales:', availableLocales);
 
       // Define required metadata columns
       const requiredMetadataColumns = [
@@ -512,7 +527,7 @@ module.exports = ({ strapi }) => ({
       const existingColumnIds = columns.map(col => col.id);
       const missingMetadataColumns = requiredMetadataColumns.filter(col => !existingColumnIds.includes(col.id));
 
-      console.log('📋 Missing metadata columns:', missingMetadataColumns.map(col => col.id));
+      logger.debug('Missing metadata columns:', missingMetadataColumns.map(col => col.id));
 
       // Check and create language columns
       const missingLanguageColumns = [];
@@ -537,10 +552,10 @@ module.exports = ({ strapi }) => ({
         }
       }
 
-      console.log('📋 Missing language columns:', missingLanguageColumns.map(col => col.id));
+      logger.debug('Missing language columns:', missingLanguageColumns.map(col => col.id));
 
       if (missingMetadataColumns.length === 0 && missingLanguageColumns.length === 0) {
-        console.log('✅ All required columns already exist');
+        logger.info('All required columns already exist');
         return {
           success: true,
           message: 'All required columns already exist',
@@ -549,13 +564,13 @@ module.exports = ({ strapi }) => ({
       }
 
       // Create missing columns
-      console.log('🔨 Creating missing columns...');
+      logger.info('Creating missing columns...');
       const createdColumns = [];
 
       // Create missing metadata columns
       for (const column of missingMetadataColumns) {
         try {
-          console.log(`🔨 Creating column: ${column.id}`);
+          logger.debug(`Creating column: ${column.id}`);
           
           const response = await axios.post(
             `https://api.gridly.com/v1/views/${viewId}/columns`,
@@ -575,9 +590,9 @@ module.exports = ({ strapi }) => ({
           );
 
           createdColumns.push(response.data);
-          console.log(`✅ Created metadata column: ${column.id}`);
+          logger.info(`Created metadata column: ${column.id}`);
         } catch (error) {
-          console.error(`❌ Error creating metadata column ${column.id}:`, error.response?.data || error.message);
+          logger.error(`Error creating metadata column ${column.id}:`, error.response?.data || error.message);
           throw new Error(`Failed to create metadata column ${column.id}: ${error.response?.data?.message || error.message}`);
         }
       }
@@ -585,7 +600,7 @@ module.exports = ({ strapi }) => ({
       // Create missing language columns
       for (const column of missingLanguageColumns) {
         try {
-          console.log(`🔨 Creating language column: ${column.id}`);
+          logger.debug(`Creating language column: ${column.id}`);
           
           const response = await axios.post(
             `https://api.gridly.com/v1/views/${viewId}/columns`,
@@ -608,20 +623,20 @@ module.exports = ({ strapi }) => ({
           );
 
           createdColumns.push(response.data);
-          console.log(`✅ Created language column: ${column.id}`);
+          logger.info(`Created language column: ${column.id}`);
         } catch (error) {
-          console.error(`❌ Error creating language column ${column.id}:`, error.response?.data || error.message);
+          logger.error(`Error creating language column ${column.id}:`, error.response?.data || error.message);
           throw new Error(`Failed to create language column ${column.id}: ${error.response?.data?.message || error.message}`);
         }
       }
 
       const totalCreated = missingMetadataColumns.length + missingLanguageColumns.length;
-      console.log(`✅ All required columns created successfully (${totalCreated} total)`);
+      logger.info(`All required columns created successfully (${totalCreated} total)`);
 
       let dependencyResult = null;
       if (includeDependencies) {
         // Now validate and create dependencies
-        console.log('🔗 Validating language dependencies...');
+        logger.debug('Validating language dependencies...');
         dependencyResult = await this.validateAndCreateDependencies(
           gridlyConfig,
           this.formatLanguageCode(sourceLanguage),
@@ -629,11 +644,11 @@ module.exports = ({ strapi }) => ({
         );
 
         if (!dependencyResult.success) {
-          console.error('❌ Dependency validation failed:', dependencyResult.error);
+          logger.error('Dependency validation failed:', dependencyResult.error);
           throw new Error(`Gridly dependency validation failed: ${dependencyResult.error}`);
         }
 
-        console.log('✅ Dependency validation completed:', dependencyResult.message);
+        logger.info('Dependency validation completed:', dependencyResult.message);
       }
 
       return {
@@ -646,7 +661,7 @@ module.exports = ({ strapi }) => ({
         totalColumns: columns.length + createdColumns.length
       };
     } catch (error) {
-      console.error('❌ Error validating/creating metadata columns:', error);
+      logger.error('Error validating/creating metadata columns:', error);
       return {
         success: false,
         error: error.message,
@@ -660,7 +675,7 @@ module.exports = ({ strapi }) => ({
    */
   async getAllGridlyRecords(gridlyConfig, limit = 2000) {
     try {
-      console.log('📥 Fetching all records from Gridly with pagination...');
+      logger.debug('Fetching all records from Gridly with pagination...');
       
       const { 'gridly-api-key': apiKey, 'gridly-view-id': viewId } = gridlyConfig;
       
@@ -673,7 +688,7 @@ module.exports = ({ strapi }) => ({
       let hasMoreRecords = true;
 
       while (hasMoreRecords) {
-        console.log(`📥 Fetching records with offset: ${offset}, limit: ${limit}`);
+        logger.debug(`Fetching records with offset: ${offset}, limit: ${limit}`);
         
         const response = await axios.get(
           `https://api.gridly.com/v1/views/${viewId}/records`,
@@ -689,7 +704,7 @@ module.exports = ({ strapi }) => ({
         );
 
         const records = response.data;
-        console.log(`📋 Fetched ${records.length} records for offset ${offset}`);
+        logger.debug(`Fetched ${records.length} records for offset ${offset}`);
         
         allRecords.push(...records);
         
@@ -701,10 +716,10 @@ module.exports = ({ strapi }) => ({
         }
       }
 
-      console.log(`✅ Total records fetched: ${allRecords.length}`);
+      logger.info(`Total records fetched: ${allRecords.length}`);
       return allRecords;
     } catch (error) {
-      console.error('❌ Error fetching Gridly records:', error);
+      logger.error('Error fetching Gridly records:', error);
       throw new Error(`Failed to fetch Gridly records: ${error.response?.data?.message || error.message}`);
     }
   },
@@ -714,11 +729,11 @@ module.exports = ({ strapi }) => ({
    */
   async updateProjectProgress(gridlyConfig, projectId) {
     try {
-      console.log('🔄 Updating project progress for project:', projectId);
+      logger.info('Updating project progress for project:', projectId);
       
       // Get all records from Gridly
       const records = await this.getAllGridlyRecords(gridlyConfig);
-      console.log(`📋 Processing ${records.length} records for progress calculation`);
+      logger.debug(`Processing ${records.length} records for progress calculation`);
 
       // Get the project to understand its structure
       const project = await strapi.plugin("gridly-integration").service("project").findOne(projectId);
@@ -737,7 +752,7 @@ module.exports = ({ strapi }) => ({
         }
       }
 
-      console.log('📋 Target languages for progress calculation:', targetLanguages);
+      logger.debug('Target languages for progress calculation:', targetLanguages);
 
       // Calculate progress for each target language
       const progressByLanguage = {};
@@ -760,7 +775,7 @@ module.exports = ({ strapi }) => ({
         const fieldName = this.getCellValue(record, 'strapi_meta_field_name');
         
         if (!strapiId || !contentType || !fieldName) {
-          console.warn('⚠️ Skipping record with missing metadata:', record.id);
+          logger.warn('Skipping record with missing metadata:', record.id);
           continue;
         }
 
@@ -771,35 +786,35 @@ module.exports = ({ strapi }) => ({
             progressByLanguage[targetLang].total++;
             totalTranslationTasks++;
             
-            console.log(`📋 Record ${record.id} - ${targetLang}: dependencyStatus=${cell.dependencyStatus}, value="${cell.value}"`);
+            logger.debug(`Record ${record.id} - ${targetLang}: dependencyStatus=${cell.dependencyStatus}, value="${cell.value}"`);
             
             // Check if the record is translated (dependencyStatus is "upToDate")
             if (cell.dependencyStatus === 'upToDate' && cell.value && cell.value.trim() !== '') {
               progressByLanguage[targetLang].translated++;
               totalCompletedTasks++;
-              console.log(`✅ Record ${record.id} - ${targetLang}: COUNTED AS TRANSLATED`);
+              logger.debug(`Record ${record.id} - ${targetLang}: COUNTED AS TRANSLATED`);
             }
           }
         }
       }
 
-      console.log('📊 Progress calculation results:');
-      console.log('📋 Total translation tasks:', totalTranslationTasks);
-      console.log('📋 Total completed tasks:', totalCompletedTasks);
-      console.log('📋 Progress by language:', progressByLanguage);
+      logger.debug('Progress calculation results:');
+      logger.debug('Total translation tasks:', totalTranslationTasks);
+      logger.debug('Total completed tasks:', totalCompletedTasks);
+      logger.debug('Progress by language:', progressByLanguage);
       
       // Show detailed breakdown
       for (const [lang, progress] of Object.entries(progressByLanguage)) {
-        console.log(`📊 ${lang}: ${progress.translated}/${progress.total} = ${Math.round((progress.translated / progress.total) * 100)}%`);
+        logger.debug(`${lang}: ${progress.translated}/${progress.total} = ${Math.round((progress.translated / progress.total) * 100)}%`);
       }
 
       // Calculate overall progress - total completed translation tasks across all languages
       const overallProgress = totalTranslationTasks > 0 ? Math.round((totalCompletedTasks / totalTranslationTasks) * 100) : 0;
       
-      console.log('📊 Overall progress calculation:');
-      console.log('📋 Total translation tasks for overall progress:', totalTranslationTasks);
-      console.log('📋 Total completed tasks:', totalCompletedTasks);
-      console.log('📋 Overall progress percentage:', overallProgress + '%');
+      logger.debug('Overall progress calculation:');
+      logger.debug('Total translation tasks for overall progress:', totalTranslationTasks);
+      logger.debug('Total completed tasks:', totalCompletedTasks);
+      logger.info(`Overall progress percentage: ${overallProgress}%`);
 
       // Update main project progress
       await strapi.plugin("gridly-integration").service("project").update(projectId, {
@@ -809,7 +824,7 @@ module.exports = ({ strapi }) => ({
         }
       });
 
-      console.log('✅ Updated main project progress:', overallProgress + '%');
+      logger.info(`Updated main project progress: ${overallProgress}%`);
 
       // Update subproject progress
       if (project.subprojects && project.subprojects.length > 0) {
@@ -822,10 +837,10 @@ module.exports = ({ strapi }) => ({
               ? Math.round((languageProgress.translated / languageProgress.total) * 100) 
               : 0;
 
-            console.log(`📊 Subproject progress calculation for ${subproject.id}:`);
-            console.log(`📋 Target language: ${targetLang}`);
-            console.log(`📋 Language progress data:`, languageProgress);
-            console.log(`📋 Subproject progress percentage: ${subprojectProgress}%`);
+            logger.debug(`Subproject progress calculation for ${subproject.id}:`);
+            logger.debug(`Target language: ${targetLang}`);
+            logger.debug(`Language progress data:`, languageProgress);
+            logger.debug(`Subproject progress percentage: ${subprojectProgress}%`);
 
             await strapi.plugin("gridly-integration").service("subproject").update(subproject.id, {
               data: {
@@ -834,7 +849,7 @@ module.exports = ({ strapi }) => ({
               }
             });
 
-            console.log(`✅ Updated subproject ${subproject.id} progress: ${subprojectProgress}% (${languageProgress.translated}/${languageProgress.total})`);
+            logger.info(`Updated subproject ${subproject.id} progress: ${subprojectProgress}% (${languageProgress.translated}/${languageProgress.total})`);
           }
         }
       }
@@ -847,7 +862,7 @@ module.exports = ({ strapi }) => ({
         progressByLanguage
       };
     } catch (error) {
-      console.error('❌ Error updating project progress:', error);
+      logger.error('Error updating project progress:', error);
       return {
         success: false,
         error: error.message
@@ -860,8 +875,7 @@ module.exports = ({ strapi }) => ({
    */
   async importTranslatedContent(gridlyConfig, targetLanguages) {
     try {
-      console.log('🔄 Starting import of translated content from Gridly...');
-      console.log('📋 Target languages:', targetLanguages);
+      logger.info('Starting import of translated content from Gridly...');
       
       const { 'gridly-api-key': apiKey, 'gridly-view-id': viewId } = gridlyConfig;
       
@@ -870,13 +884,13 @@ module.exports = ({ strapi }) => ({
       }
 
       // Get all records from Gridly
-      console.log('📥 Fetching records from Gridly...');
+      logger.info('Fetching records from Gridly...');
       const records = await this.getAllGridlyRecords(gridlyConfig);
-      console.log(`📋 Found ${records.length} records in Gridly`);
+      logger.info(`Found ${records.length} records in Gridly`);
 
       // Group records by Strapi entry
       const entriesToUpdate = this.groupRecordsByEntry(records, targetLanguages);
-      console.log(`📋 Grouped into ${Object.keys(entriesToUpdate).length} entries to update`);
+      logger.info(`Grouped into ${Object.keys(entriesToUpdate).length} entries to update`);
 
       // Update Strapi entries with translated content
       const results = [];
@@ -885,7 +899,7 @@ module.exports = ({ strapi }) => ({
           const result = await this.updateStrapiEntry(entryData);
           results.push(result);
         } catch (error) {
-          console.error(`❌ Error updating entry ${entryKey}:`, error.message);
+          logger.error(`Error updating entry ${entryKey}:`, error.message);
           results.push({
             success: false,
             entryKey,
@@ -894,7 +908,7 @@ module.exports = ({ strapi }) => ({
         }
       }
 
-      console.log('✅ Import completed');
+      logger.info('Import completed');
       return {
         success: true,
         results,
@@ -902,7 +916,7 @@ module.exports = ({ strapi }) => ({
         updatedEntries: results.filter(r => r.success).length
       };
     } catch (error) {
-      console.error('❌ Error importing translated content:', error);
+      logger.error('Error importing translated content:', error);
       return {
         success: false,
         error: error.message,
@@ -978,17 +992,17 @@ module.exports = ({ strapi }) => ({
             entries[entryKey].fieldTypes[fieldName] = actualFieldType;
             
             // Debug: Log the raw value and field type
-            console.log(`🔍 Processing field ${fieldName}:`);
-            console.log(`   Raw value type: ${typeof cell.value}, isArray: ${Array.isArray(cell.value)}`);
-            console.log(`   Raw value:`, JSON.stringify(cell.value).substring(0, 200));
-            console.log(`   Gridly field type: ${gridlyFieldType}`);
-            console.log(`   Strapi field type: ${strapiFieldType}`);
-            console.log(`   Actual field type (used): ${actualFieldType}`);
+            logger.debug(`Processing field ${fieldName}:`);
+            logger.debug(`   Raw value type: ${typeof cell.value}, isArray: ${Array.isArray(cell.value)}`);
+            logger.debug(`   Raw value:`, JSON.stringify(cell.value).substring(0, 200));
+            logger.debug(`   Gridly field type: ${gridlyFieldType}`);
+            logger.debug(`   Strapi field type: ${strapiFieldType}`);
+            logger.debug(`   Actual field type (used): ${actualFieldType}`);
             
             // Process the field value based on its actual type
             const processedValue = this.processFieldData(fieldName, cell.value, actualFieldType);
-            console.log(`   Processed value type: ${typeof processedValue}, isArray: ${Array.isArray(processedValue)}`);
-            console.log(`   Processed value:`, JSON.stringify(processedValue).substring(0, 200));
+            logger.debug(`   Processed value type: ${typeof processedValue}, isArray: ${Array.isArray(processedValue)}`);
+            logger.debug(`   Processed value:`, JSON.stringify(processedValue).substring(0, 200));
             
             entries[entryKey].translations[strapiLocale][fieldName] = processedValue;
           }
@@ -1038,7 +1052,7 @@ module.exports = ({ strapi }) => ({
         throw new Error('API key or View ID is missing');
       }
 
-      console.log('🔍 Fetching dependencies for view:', viewId);
+      logger.debug('Fetching dependencies for view:', viewId);
       
       const response = await axios.get(
         `https://api.gridly.com/v1/views/${viewId}/dependencies`,
@@ -1049,14 +1063,14 @@ module.exports = ({ strapi }) => ({
         }
       );
 
-      console.log('📋 Dependencies response:', response.data);
-      console.log('📋 Dependencies response type:', typeof response.data);
-      console.log('📋 Dependencies response length:', Array.isArray(response.data) ? response.data.length : 'not an array');
+      logger.debug('Dependencies response:', response.data);
+      logger.debug('Dependencies response type:', typeof response.data);
+      logger.debug('Dependencies response length:', Array.isArray(response.data) ? response.data.length : 'not an array');
       return response.data;
     } catch (error) {
-      console.error('❌ Error getting Gridly dependencies:', error.response?.data || error.message);
-      console.error('❌ Error status:', error.response?.status);
-      console.error('❌ Error statusText:', error.response?.statusText);
+      logger.error('Error getting Gridly dependencies:', error.response?.data || error.message);
+      logger.error('Error status:', error.response?.status);
+      logger.error('Error statusText:', error.response?.statusText);
       return [];
     }
   },
@@ -1072,14 +1086,14 @@ module.exports = ({ strapi }) => ({
         throw new Error('API key or View ID is missing');
       }
 
-      console.log(`🔗 Creating dependency: ${sourceColumnId} -> ${targetColumnId} in view: ${viewId}`);
+      logger.debug(`Creating dependency: ${sourceColumnId} -> ${targetColumnId} in view: ${viewId}`);
       
       const requestBody = {
         sourceColumnId: sourceColumnId,
         targetColumnId: targetColumnId
       };
       
-      console.log('📋 Dependency request body:', requestBody);
+      logger.debug('Dependency request body:', requestBody);
 
       const response = await axios.post(
         `https://api.gridly.com/v1/views/${viewId}/dependencies`,
@@ -1092,10 +1106,10 @@ module.exports = ({ strapi }) => ({
         }
       );
 
-      console.log('✅ Dependency created successfully:', response.data);
+      logger.info(`Dependency created successfully: ${sourceColumnId} -> ${targetColumnId}`);
       return response.data;
     } catch (error) {
-      console.error(`Error creating dependency ${sourceColumnId} -> ${targetColumnId}:`, error.response?.data || error.message);
+      logger.error(`Error creating dependency ${sourceColumnId} -> ${targetColumnId}:`, error.response?.data || error.message);
       throw new Error(`Failed to create dependency ${sourceColumnId} -> ${targetColumnId}: ${error.response?.data?.message || error.message}`);
     }
   },
@@ -1105,32 +1119,32 @@ module.exports = ({ strapi }) => ({
    */
   async validateAndCreateDependencies(gridlyConfig, sourceColumnId, targetColumnIds) {
     try {
-      console.log('🔍 Checking existing dependencies...');
-      console.log('📋 Source column ID:', sourceColumnId);
-      console.log('📋 Target column IDs:', targetColumnIds);
+      logger.debug('Checking existing dependencies...');
+      logger.debug('Source column ID:', sourceColumnId);
+      logger.debug('Target column IDs:', targetColumnIds);
       
       // Get existing dependencies
       const existingDependencies = await this.getGridlyDependencies(gridlyConfig);
-      console.log('📋 Existing dependencies:', existingDependencies);
-      console.log('📋 Existing dependencies type:', typeof existingDependencies);
-      console.log('📋 Existing dependencies length:', Array.isArray(existingDependencies) ? existingDependencies.length : 'not an array');
+      logger.debug('Existing dependencies:', existingDependencies);
+      logger.debug('Existing dependencies type:', typeof existingDependencies);
+      logger.debug('Existing dependencies length:', Array.isArray(existingDependencies) ? existingDependencies.length : 'not an array');
 
       // Check which target languages already have dependencies with the source
       const existingTargetDependencies = existingDependencies
         .filter(dep => dep.sourceColumnId === sourceColumnId)
         .map(dep => dep.targetColumnId);
 
-      console.log('📋 Existing target dependencies for', sourceColumnId, ':', existingTargetDependencies);
+      logger.debug('Existing target dependencies for', sourceColumnId, ':', existingTargetDependencies);
 
       // Find missing dependencies
       const missingDependencies = targetColumnIds.filter(targetId => 
         !existingTargetDependencies.includes(targetId)
       );
 
-      console.log('📋 Missing dependencies:', missingDependencies);
+      logger.debug('Missing dependencies:', missingDependencies);
 
       if (missingDependencies.length === 0) {
-        console.log('✅ All dependencies already exist');
+        logger.info('All dependencies already exist');
         return {
           success: true,
           message: 'All dependencies already exist',
@@ -1139,24 +1153,24 @@ module.exports = ({ strapi }) => ({
       }
 
       // Create missing dependencies
-      console.log('🔗 Creating missing dependencies...');
+      logger.info('Creating missing dependencies...');
       const createdDependencies = [];
 
       for (const targetColumnId of missingDependencies) {
         try {
-          console.log(`🔗 Creating dependency: ${sourceColumnId} -> ${targetColumnId}`);
+          logger.debug(`Creating dependency: ${sourceColumnId} -> ${targetColumnId}`);
           
           const dependency = await this.createGridlyDependency(gridlyConfig, sourceColumnId, targetColumnId);
           createdDependencies.push(dependency);
           
-          console.log(`✅ Created dependency: ${sourceColumnId} -> ${targetColumnId}`);
+          logger.info(`Created dependency: ${sourceColumnId} -> ${targetColumnId}`);
         } catch (error) {
-          console.error(`❌ Error creating dependency ${sourceColumnId} -> ${targetColumnId}:`, error);
+          logger.error(`Error creating dependency ${sourceColumnId} -> ${targetColumnId}:`, error);
           throw error;
         }
       }
 
-      console.log(`✅ All dependencies created successfully (${createdDependencies.length} total)`);
+      logger.info(`All dependencies created successfully (${createdDependencies.length} total)`);
       return {
         success: true,
         message: `Created ${createdDependencies.length} dependencies`,
@@ -1164,7 +1178,7 @@ module.exports = ({ strapi }) => ({
         dependencies: createdDependencies
       };
     } catch (error) {
-      console.error('❌ Error validating/creating dependencies:', error);
+      logger.error('Error validating/creating dependencies:', error);
       return {
         success: false,
         error: error.message,
@@ -1183,7 +1197,7 @@ module.exports = ({ strapi }) => ({
       });
       return entry && entry.publishedAt !== null;
     } catch (error) {
-      console.warn(`⚠️ Could not check publication status for ${contentType}:${entryId}:`, error.message);
+      logger.warn(`Could not check publication status for ${contentType}:${entryId}:`, error.message);
       return false;
     }
   },
@@ -1224,12 +1238,12 @@ module.exports = ({ strapi }) => ({
           });
         } else {
           // Create or update localization using Strapi i18n API
-          console.log(`\n📝 Creating/updating localization for ${locale}:`);
-          console.log(`   Content Type: ${entryData.contentType}`);
-          console.log(`   Entry ID: ${entryData.strapiId}`);
-          console.log(`   Locale: ${locale}`);
-          console.log(`   Translation Fields:`, Object.keys(translations));
-          console.log(`   Translation Data:`, JSON.stringify(translations, null, 2));
+          logger.debug(`Creating/updating localization for ${locale}:`);
+          logger.debug(`   Content Type: ${entryData.contentType}`);
+          logger.debug(`   Entry ID: ${entryData.strapiId}`);
+          logger.debug(`   Locale: ${locale}`);
+          logger.debug(`   Translation Fields:`, Object.keys(translations));
+          logger.debug(`   Translation Data:`, JSON.stringify(translations, null, 2));
           
           const result = await this.createOrUpdateLocalization(
             entryData.contentType,
@@ -1246,27 +1260,26 @@ module.exports = ({ strapi }) => ({
           });
         }
       } catch (error) {
-        console.error(`\n❌ [ERROR] Failed to update ${locale} for entry ${entryData.strapiId}:`);
-        console.error(`   Content Type: ${entryData.contentType}`);
-        console.error(`   Entry ID: ${entryData.strapiId}`);
-        console.error(`   Locale: ${locale}`);
-        console.error(`   Error Message: ${error.message}`);
+        logger.error(`[ERROR] Failed to update ${locale} for entry ${entryData.strapiId}:`);
+        logger.error(`   Content Type: ${entryData.contentType}`);
+        logger.error(`   Entry ID: ${entryData.strapiId}`);
+        logger.error(`   Locale: ${locale}`);
+        logger.error(`   Error Message: ${error.message}`);
         
         // Log validation errors if available
         if (error.details && error.details.errors) {
-          console.error(`   Validation Errors:`);
+          logger.error(`   Validation Errors:`);
           error.details.errors.forEach((err, index) => {
-            console.error(`     ${index + 1}. ${err.path || 'unknown'}: ${err.message || err}`);
+            logger.error(`     ${index + 1}. ${err.path || 'unknown'}: ${err.message || err}`);
           });
         }
         
         // Log full error details for debugging
         if (error.details) {
-          console.error(`   Full Error Details:`, JSON.stringify(error.details, null, 2));
+          logger.debug(`   Full Error Details:`, JSON.stringify(error.details, null, 2));
         }
         
-        console.error(`   Error Stack:`, error.stack);
-        console.error(`\n`);
+        logger.debug(`   Error Stack:`, error.stack);
         
         results.push({
           success: false,
@@ -1308,35 +1321,77 @@ module.exports = ({ strapi }) => ({
         const isPublished = await this.isEntryPublished(contentType, existingLocalization.id);
         
         // Exclude slug from data - slugs should be set by users when creating posts, not modified during translation import
-        const { slug, ...dataWithoutSlug } = data;
+        // According to Strapi docs: "When updating a localization for existing localized entries, 
+        // the body of the PUT request can only accept localized fields."
+        // Also: "It is not possible to change the locale of an existing localized entry. 
+        // When updating a localized entry, if you set a locale attribute in the request body it will be ignored."
+        const { slug, locale: localeField, ...dataWithoutSlug } = data;
         const updateOptions = {
           data: dataWithoutSlug
         };
         
-        // If published, update the published version, not just the draft
+        // If published, we need to update both draft and published versions
+        // First update the draft, then publish it
+        // This ensures the changes are properly saved
         if (isPublished) {
-          updateOptions.publicationState = 'live';
+          // Update draft first
+          updateOptions.publicationState = 'preview';
+        } else {
+          // Explicitly set to 'preview' to ensure we update the draft version
+          updateOptions.publicationState = 'preview';
         }
         
         try {
-          const updatedLocalization = await strapi.entityService.update(contentType, existingLocalization.id, updateOptions);
+          // Try using Document Service API for better i18n support (Strapi v4.10+)
+          let updatedLocalization;
+          if (strapi.documents && typeof strapi.documents === 'object') {
+            try {
+              const documentService = strapi.documents(contentType);
+              updatedLocalization = await documentService.update({
+                documentId: existingLocalization.documentId || existingLocalization.id,
+                locale: locale,
+                data: dataWithoutSlug,
+                status: isPublished ? 'published' : 'draft'
+              });
+            } catch (docError) {
+              // Fallback to entityService
+              updatedLocalization = await strapi.entityService.update(contentType, existingLocalization.id, updateOptions);
+            }
+          } else {
+            updatedLocalization = await strapi.entityService.update(contentType, existingLocalization.id, updateOptions);
+          }
+          
+          // Always update both draft and published versions to ensure consistency
+          try {
+            const publishUpdateOptions = {
+              data: dataWithoutSlug,
+              publicationState: 'live'
+            };
+            await strapi.entityService.update(contentType, existingLocalization.id, publishUpdateOptions);
+          } catch (publishError) {
+            // It's okay if published version doesn't exist (entry is draft only)
+            if (!publishError.message || !publishError.message.includes('not found')) {
+              logger.warn(`Failed to update published version for ${contentType}:${existingLocalization.id}:`, publishError.message);
+            }
+          }
+          
           return {
             action: 'updated',
             entryId: updatedLocalization.id
           };
         } catch (updateError) {
-          console.error(`\n❌ [UPDATE ERROR] Failed to update existing localization:`);
-          console.error(`   Content Type: ${contentType}`);
-          console.error(`   Localization ID: ${existingLocalization.id}`);
-          console.error(`   Locale: ${locale}`);
-          console.error(`   Update Data:`, JSON.stringify(data, null, 2));
-          console.error(`   Update Options:`, JSON.stringify(updateOptions, null, 2));
+          logger.error(`[UPDATE ERROR] Failed to update existing localization:`);
+          logger.error(`   Content Type: ${contentType}`);
+          logger.error(`   Localization ID: ${existingLocalization.id}`);
+          logger.error(`   Locale: ${locale}`);
+          logger.debug(`   Update Data:`, JSON.stringify(data, null, 2));
+          logger.debug(`   Update Options:`, JSON.stringify(updateOptions, null, 2));
           if (updateError.details && updateError.details.errors) {
-            console.error(`   Validation Errors:`);
+            logger.error(`   Validation Errors:`);
             updateError.details.errors.forEach((err, index) => {
-              console.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
+              logger.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
               if (err.values) {
-                console.error(`        Values:`, err.values);
+                logger.debug(`        Values:`, err.values);
               }
             });
           }
@@ -1376,8 +1431,8 @@ module.exports = ({ strapi }) => ({
             if (model && model.attributes && model.attributes.slug) {
               // Generate slug from title
               const baseSlug = this.generateSlugFromTitle(createData.title);
-              // Generate a short random string (6 characters) to ensure uniqueness
-              const randomSuffix = Math.random().toString(36).substring(2, 8);
+              // Generate a cryptographically secure random string (6 characters) to ensure uniqueness
+              const randomSuffix = generateSecureRandomSuffix(6);
               // Combine: baseSlug-entryId-locale-randomSuffix to ensure uniqueness
               const uniqueSlug = `${baseSlug}-${entryId}-${locale}-${randomSuffix}`;
               createData.slug = uniqueSlug;
@@ -1386,8 +1441,8 @@ module.exports = ({ strapi }) => ({
             // If we can't check the model, try to generate slug anyway
             const baseSlug = this.generateSlugFromTitle(createData.title);
             if (baseSlug) {
-              // Generate a short random string to ensure uniqueness
-              const randomSuffix = Math.random().toString(36).substring(2, 8);
+              // Generate a cryptographically secure random string to ensure uniqueness
+              const randomSuffix = generateSecureRandomSuffix(6);
               // Add entry ID, locale, and random suffix to make it unique
               createData.slug = `${baseSlug}-${entryId}-${locale}-${randomSuffix}`;
             }
@@ -1425,17 +1480,17 @@ module.exports = ({ strapi }) => ({
             entryId: newLocalization.id
           };
         } catch (createError) {
-          console.error(`\n❌ [CREATE ERROR] Failed to create new localization:`);
-          console.error(`   Content Type: ${contentType}`);
-          console.error(`   Original Entry ID: ${entryId}`);
-          console.error(`   Locale: ${locale}`);
-          console.error(`   Create Data:`, JSON.stringify(createData, null, 2));
+          logger.error(`[CREATE ERROR] Failed to create new localization:`);
+          logger.error(`   Content Type: ${contentType}`);
+          logger.error(`   Original Entry ID: ${entryId}`);
+          logger.error(`   Locale: ${locale}`);
+          logger.debug(`   Create Data:`, JSON.stringify(createData, null, 2));
           if (createError.details && createError.details.errors) {
-            console.error(`   Validation Errors:`);
+            logger.error(`   Validation Errors:`);
             createError.details.errors.forEach((err, index) => {
-              console.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
+              logger.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
               if (err.values) {
-                console.error(`        Values:`, err.values);
+                logger.debug(`        Values:`, err.values);
               }
             });
           }
@@ -1444,35 +1499,34 @@ module.exports = ({ strapi }) => ({
       }
       
     } catch (error) {
-      console.error(`\n❌ [ERROR] Failed to create/update localization for ${locale}:`);
-      console.error(`   Content Type: ${contentType}`);
-      console.error(`   Entry ID: ${entryId}`);
-      console.error(`   Locale: ${locale}`);
-      console.error(`   Error Message: ${error.message}`);
+      logger.error(`[ERROR] Failed to create/update localization for ${locale}:`);
+      logger.error(`   Content Type: ${contentType}`);
+      logger.error(`   Entry ID: ${entryId}`);
+      logger.error(`   Locale: ${locale}`);
+      logger.error(`   Error Message: ${error.message}`);
       
       // Log validation errors if available
       if (error.details && error.details.errors) {
-        console.error(`   Validation Errors:`);
+        logger.error(`   Validation Errors:`);
         error.details.errors.forEach((err, index) => {
-          console.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
+          logger.error(`     ${index + 1}. Field: ${err.path || 'unknown'}, Message: ${err.message || err}`);
           if (err.values) {
-            console.error(`        Values:`, err.values);
+            logger.debug(`        Values:`, err.values);
           }
         });
       }
       
       // Log the data that was being sent (for debugging)
       if (data) {
-        console.error(`   Data being sent:`, JSON.stringify(data, null, 2));
+        logger.debug(`   Data being sent:`, JSON.stringify(data, null, 2));
       }
       
       // Log full error details for debugging
       if (error.details) {
-        console.error(`   Full Error Details:`, JSON.stringify(error.details, null, 2));
+        logger.debug(`   Full Error Details:`, JSON.stringify(error.details, null, 2));
       }
       
-      console.error(`   Error Stack:`, error.stack);
-      console.error(`\n`);
+      logger.debug(`   Error Stack:`, error.stack);
       
       throw error;
     }
@@ -1485,7 +1539,7 @@ module.exports = ({ strapi }) => ({
     try {
       const model = strapi.getModel(contentType);
       if (!model || !model.attributes || !model.attributes[fieldName]) {
-        console.warn(`⚠️ Field ${fieldName} not found in content type ${contentType}`);
+        logger.warn(`Field ${fieldName} not found in content type ${contentType}`);
         return 'string'; // Default fallback
       }
       
@@ -1523,7 +1577,7 @@ module.exports = ({ strapi }) => ({
       // Default fallback
       return field.type || 'string';
     } catch (error) {
-      console.error(`❌ Error getting field type for ${fieldName} in ${contentType}:`, error);
+      logger.error(`Error getting field type for ${fieldName} in ${contentType}:`, error);
       return 'string'; // Default fallback
     }
   },
@@ -1546,7 +1600,7 @@ module.exports = ({ strapi }) => ({
       
       return fieldStructureMap[contentType] || {};
     } catch (error) {
-      console.error(`❌ Error getting field structure for ${contentType}:${entryId}:`, error);
+      logger.error(`Error getting field structure for ${contentType}:${entryId}:`, error);
       return {};
     }
   },
@@ -1636,4 +1690,5 @@ module.exports = ({ strapi }) => ({
       ]
     }));
   }
-}); 
+  };
+}; 

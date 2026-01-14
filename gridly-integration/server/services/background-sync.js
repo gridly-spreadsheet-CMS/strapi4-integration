@@ -305,15 +305,21 @@ module.exports = ({ strapi }) => {
       return;
     }
     
-    // Skip projects that were synced very recently (within last 30 seconds)
-    const lastSync = project['last-sync'];
-    if (lastSync) {
-      const lastSyncTime = new Date(lastSync);
-      const now = new Date();
-      const timeSinceLastSync = now.getTime() - lastSyncTime.getTime();
-      
-      if (timeSinceLastSync < 30000) { // 30 seconds
-        return;
+    // Check if a sync is already in progress (lock mechanism with 10-minute timeout)
+    const SYNC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+    if (project['sync-status'] === 'syncing') {
+      const syncStartedAt = project['sync-started-at'];
+      if (syncStartedAt) {
+        const syncStartTime = new Date(syncStartedAt);
+        const now = new Date();
+        const timeSinceStart = now.getTime() - syncStartTime.getTime();
+        
+        if (timeSinceStart < SYNC_TIMEOUT_MS) {
+          // Sync is still in progress (within timeout window), skip
+          return;
+        }
+        // Sync has timed out (older than 10 minutes), allow new sync
+        // Lock will be acquired by syncToGridly
       }
     }
     

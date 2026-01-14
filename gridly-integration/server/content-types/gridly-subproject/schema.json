@@ -37,15 +37,6 @@
     "last-synch": {
       "type": "timestamp"
     },
-    "gridly-api-key": {
-      "type": "text",
-      "required": true,
-      "private": true
-    },
-    "gridly-view-id": {
-      "type": "string",
-      "required": true
-    },
     "project": {
       "type": "relation",
       "relation": "manyToOne",

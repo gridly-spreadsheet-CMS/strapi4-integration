@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Typography, Button, Stack } from '@strapi/design-system';
 import { Cross, Check } from '@strapi/icons';
 import { useProjectUpdate } from '../../contexts/ProjectUpdateContext.js';

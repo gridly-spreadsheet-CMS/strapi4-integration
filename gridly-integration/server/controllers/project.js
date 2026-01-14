@@ -1,6 +1,10 @@
 'use strict';
 
-module.exports = {
+module.exports = ({ strapi }) => {
+  // Get logger service
+  const logger = strapi.plugin('gridly-integration').service('logger');
+
+  return {
     async find(ctx) {
         try {
             return await strapi.plugin("gridly-integration").service("project").find(ctx.query);
@@ -20,7 +24,7 @@ module.exports = {
         try {
             const data = ctx.request.body;
             
-            console.log('🔄 Creating project with data:', data);
+            logger.debug('Creating project with data:', data);
             
             // Automatically set creation-date
             const projectData = {
@@ -35,23 +39,23 @@ module.exports = {
                 projectData["gridly-config-id"] = data.gridlyConfigId;
             }
             
-            console.log('📋 Project data to be created:', projectData);
+            logger.debug('Project data to be created:', projectData);
             
             const project = await strapi.plugin("gridly-integration").service("project").create({ data: projectData });
             
-            console.log('✅ Project created:', project);
+            logger.info('Project created:', project.id);
             
             // Get Gridly configuration if provided
             let gridlyConfig = null;
             if (data.gridlyConfigId) {
-                console.log('🔧 Getting Gridly config for ID:', data.gridlyConfigId);
+                logger.debug('Getting Gridly config for ID:', data.gridlyConfigId);
                 gridlyConfig = await strapi.plugin("gridly-integration").service("gridlyConfig").findOne(data.gridlyConfigId);
-                console.log('📋 Gridly config found:', gridlyConfig ? 'Yes' : 'No');
+                logger.debug('Gridly config found:', gridlyConfig ? 'Yes' : 'No');
             }
             
             // Create subproject for each target language
             if (data.targetLanguages && Array.isArray(data.targetLanguages)) {
-                console.log('🌍 Creating subprojects for languages:', data.targetLanguages);
+                logger.debug('Creating subprojects for languages:', data.targetLanguages);
                 for (const targetLanguage of data.targetLanguages) {
                     const subprojectData = {
                         "target-language": targetLanguage,
@@ -60,13 +64,7 @@ module.exports = {
                         "project": project.id
                     };
                     
-                    // Add Gridly settings if configuration is provided
-                    if (gridlyConfig) {
-                        subprojectData["gridly-api-key"] = gridlyConfig["gridly-api-key"];
-                        subprojectData["gridly-view-id"] = gridlyConfig["gridly-view-id"];
-                    }
-                    
-                    console.log('📋 Creating subproject for language:', targetLanguage, subprojectData);
+                    logger.debug('Creating subproject for language:', targetLanguage);
                     await strapi.plugin("gridly-integration").service("subproject").create({
                         data: subprojectData
                     });
@@ -75,12 +73,12 @@ module.exports = {
             
             // If Gridly config is provided and selected content exists, send to Gridly
             if (gridlyConfig && data["selected-content"] && data["selected-content"].length > 0) {
-                console.log('🚀 Attempting to send content to Gridly...');
+                logger.info('Attempting to send content to Gridly...');
                 try {
                     const gridlyApiService = strapi.plugin("gridly-integration").service("gridlyApi");
                     
                     // First, validate and create required metadata columns
-                    console.log('🔍 Validating Gridly view columns...');
+                    logger.debug('Validating Gridly view columns...');
                     const columnValidation = await gridlyApiService.validateAndCreateMetadataColumns(
                         gridlyConfig, 
                         data["source-language"], 
@@ -88,25 +86,25 @@ module.exports = {
                     );
                     
                     if (!columnValidation.success) {
-                        console.error('❌ Column validation failed:', columnValidation.error);
+                        logger.error('Column validation failed:', columnValidation.error);
                         throw new Error(`Gridly column validation failed: ${columnValidation.error}`);
                     }
                     
-                    console.log('✅ Column validation completed:', columnValidation.message);
+                    logger.info('Column validation completed:', columnValidation.message);
 
                     // Then validate and create dependencies
-                    console.log('🔗 Validating Gridly dependencies...');
+                    logger.debug('Validating Gridly dependencies...');
                     const dependencyValidation = await gridlyApiService.validateAndCreateDependencies(
                         gridlyConfig,
                         gridlyApiService.formatLanguageCode(data["source-language"]),
                         data["targetLanguages"].map(lang => gridlyApiService.formatLanguageCode(lang))
                     );
                     if (!dependencyValidation.success) {
-                        console.error('❌ Dependency validation failed:', dependencyValidation.error);
+                        logger.error('Dependency validation failed:', dependencyValidation.error);
                         throw new Error(`Gridly dependency validation failed: ${dependencyValidation.error}`);
                     }
                     
-                    console.log('✅ Dependency validation completed:', dependencyValidation.message);
+                    logger.info('Dependency validation completed:', dependencyValidation.message);
                     
                     // Now send content to Gridly
                     const result = await gridlyApiService.sendContentToGridly(
@@ -115,7 +113,7 @@ module.exports = {
                         data["source-language"]
                     );
                     
-                    console.log('📤 Gridly API result:', result);
+                    logger.debug('Gridly API result:', result.success ? 'Success' : 'Failed');
                     
                     if (result.success) {
                         // Calculate translation tasks (records × languages)
@@ -125,9 +123,9 @@ module.exports = {
                         const tasksPerLanguage = data["targetLanguages"].length > 0 
                             ? result.recordsCount
                             : result.recordsCount;
-                        console.log('📊 Total translation tasks:', totalTranslationTasks);
-                        console.log('📊 Tasks per language:', tasksPerLanguage);
-                        console.log('📋 Number of target languages:', data["targetLanguages"].length);
+                        logger.debug('Total translation tasks:', totalTranslationTasks);
+                        logger.debug('Tasks per language:', tasksPerLanguage);
+                        logger.debug('Number of target languages:', data["targetLanguages"].length);
                         
                         // Update project with sync information and total translation tasks count
                         await strapi.plugin("gridly-integration").service("project").update(project.id, {
@@ -138,47 +136,47 @@ module.exports = {
                                 'total-records': totalTranslationTasks // Update total translation tasks count
                             }
                         });
-                        console.log('✅ Project updated with sync info and total records:', result.recordsCount);
+                        logger.info('Project updated with sync info and total records:', result.recordsCount);
                         
                         // Update subprojects with their language-specific record counts
-                        console.log('🔍 Project creation subproject update check:');
-                        console.log('  - Target languages length:', data["targetLanguages"]?.length || 0);
-                        console.log('  - Tasks per language:', tasksPerLanguage);
+                        logger.debug('Project creation subproject update check:');
+                        logger.debug('  - Target languages length:', data["targetLanguages"]?.length || 0);
+                        logger.debug('  - Tasks per language:', tasksPerLanguage);
                         
                         // Since subprojects were created earlier, we need to find them by project ID
                         if (data["targetLanguages"] && data["targetLanguages"].length > 0) {
-                            console.log('📊 Finding and updating subprojects for project:', project.id);
+                            logger.debug('Finding and updating subprojects for project:', project.id);
                             
                             // Find all subprojects for this project
                             const subprojects = await strapi.plugin("gridly-integration").service("subproject").find({
                                 filters: { project: project.id }
                             });
                             
-                            console.log('📋 Found subprojects:', subprojects.length);
+                            logger.debug('Found subprojects:', subprojects.length);
                             
                             if (subprojects.length > 0) {
-                                console.log('📊 Using target language distribution for subprojects');
+                                logger.debug('Using target language distribution for subprojects');
                                 for (const subproject of subprojects) {
-                                    console.log(`  - Updating subproject ${subproject.id} with ${tasksPerLanguage} translation tasks`);
+                                    logger.debug(`  - Updating subproject ${subproject.id} with ${tasksPerLanguage} translation tasks`);
                                     await strapi.plugin("gridly-integration").service("subproject").update(subproject.id, {
                                         data: {
                                             'number-of-records': tasksPerLanguage
                                         }
                                     });
                                 }
-                                console.log('✅ Updated subproject translation task counts');
+                                logger.info('Updated subproject translation task counts');
                             } else {
-                                console.log('⚠️ No subprojects found for project');
+                                logger.warn('No subprojects found for project');
                             }
                         } else {
-                            console.log('⚠️ No target languages to update subprojects for');
+                            logger.warn('No target languages to update subprojects for');
                         }
                     } else {
-                        console.error('❌ Failed to send to Gridly:', result.error);
+                        logger.error('Failed to send to Gridly:', result.error);
                         
                         // Delete the created project since Gridly sync failed
                         await strapi.plugin("gridly-integration").service("project").delete(project.id);
-                        console.log('🗑️ Project deleted due to Gridly sync failure');
+                        logger.warn('Project deleted due to Gridly sync failure');
                         
                         // Return error to user with the actual Gridly error message
                         const errorResponse = {
@@ -187,18 +185,18 @@ module.exports = {
                             details: result.details || result.error
                         };
                         
-                        console.log('📤 Sending error response to frontend:', errorResponse);
+                        logger.debug('📤 Sending error response to frontend:', errorResponse);
                         
                         ctx.status = 400;
                         ctx.body = errorResponse;
                         return;
                     }
                 } catch (gridlyError) {
-                    console.error('❌ Error sending to Gridly:', gridlyError);
+                    logger.error('Error sending to Gridly:', gridlyError);
                     
                     // Delete the created project since Gridly sync failed
                     await strapi.plugin("gridly-integration").service("project").delete(project.id);
-                    console.log('🗑️ Project deleted due to Gridly sync failure');
+                    logger.debug('🗑️ Project deleted due to Gridly sync failure');
                     
                     // Return error to user with the actual Gridly error message
                     const errorResponse = {
@@ -207,19 +205,19 @@ module.exports = {
                         details: gridlyError.details || gridlyError.message
                     };
                     
-                    console.log('📤 Sending error response to frontend:', errorResponse);
+                    logger.debug('📤 Sending error response to frontend:', errorResponse);
                     
                     ctx.status = 400;
                     ctx.body = errorResponse;
                     return;
                 }
             } else {
-                console.log('⚠️ No Gridly config or selected content, skipping Gridly sync');
+                logger.warn('No Gridly config or selected content, skipping Gridly sync');
             }
             
             return project;
         } catch (error) {
-            console.error('❌ Error creating project:', error);
+            logger.error('Error creating project:', error);
             
             // If this is already a structured error from our code, pass it through
             if (error.message && (error.details || error.status)) {
@@ -228,7 +226,7 @@ module.exports = {
                     message: error.message,
                     details: error.details || error
                 };
-                console.log('📤 Sending structured error response to frontend:', errorResponse);
+                logger.debug('Sending structured error response to frontend');
                 ctx.status = error.status || 500;
                 ctx.body = errorResponse;
                 return;
@@ -239,7 +237,7 @@ module.exports = {
                     message: error.message || 'An unexpected error occurred',
                     details: error
                 };
-                console.log('📤 Sending wrapped error response to frontend:', errorResponse);
+                logger.debug('Sending wrapped error response to frontend');
                 ctx.status = 500;
                 ctx.body = errorResponse;
                 return;
@@ -299,12 +297,12 @@ module.exports = {
             
             // Add the current user as created_by
             // In Strapi 4, the user is available in ctx.state.user
-            console.log('Current user:', ctx.state.user);
+            logger.debug('Current user:', ctx.state.user?.id || 'Not found');
             if (ctx.state.user && ctx.state.user.id) {
                 data.created_by = ctx.state.user.id;
-                console.log('Setting created_by to:', ctx.state.user.id);
+                logger.debug('Setting created_by to:', ctx.state.user.id);
             } else {
-                console.log('No user found in ctx.state.user');
+                logger.warn('No user found in ctx.state.user');
             }
             
             return await strapi.plugin("gridly-integration").service("gridlyConfig").create(data);
@@ -335,11 +333,11 @@ module.exports = {
             const contentTypes = strapi.contentTypes;
             const apiContentTypes = [];
             
-            console.log('Available content types:', Object.keys(contentTypes));
+            logger.debug('Available content types:', Object.keys(contentTypes));
             
             // Filter for API content types (excluding admin and plugin content types)
             for (const [uid, contentType] of Object.entries(contentTypes)) {
-                console.log(`Checking content type: ${uid}`, {
+                logger.debug(`Checking content type: ${uid}`, {
                     kind: contentType.kind,
                     startsWithApi: uid.startsWith('api::'),
                     isCollectionType: contentType.kind === 'collectionType',
@@ -355,7 +353,7 @@ module.exports = {
                     // Default to visible if no pluginOptions are set
                     const isVisible = contentType.pluginOptions?.['content-manager']?.visible !== false;
                     
-                    console.log(`Content type ${uid} visibility:`, {
+                    logger.debug(`Content type ${uid} visibility:`, {
                         hasPluginOptions: !!contentType.pluginOptions,
                         contentManagerVisible: contentType.pluginOptions?.['content-manager']?.visible,
                         isVisible: isVisible
@@ -373,10 +371,10 @@ module.exports = {
                 }
             }
             
-            console.log('Found API content types:', apiContentTypes);
+            logger.debug('Found API content types:', apiContentTypes);
             return apiContentTypes;
         } catch (error) {
-            console.error('Error in getContentTypes:', error);
+            logger.error('Error in getContentTypes:', error);
             ctx.throw(500, error);
         }
     },
@@ -385,16 +383,16 @@ module.exports = {
             const { contentTypeUid } = ctx.params;
             const { locale } = ctx.query; // Get locale from query params
             
-            console.log('Fetching entries for content type:', contentTypeUid, 'locale:', locale);
+            logger.debug('Fetching entries for content type:', contentTypeUid, 'locale:', locale);
             
             // Validate that the content type exists and is accessible
             const contentType = strapi.contentTypes[contentTypeUid];
             if (!contentType || (!contentTypeUid.startsWith('api::') && !contentTypeUid.startsWith('application::'))) {
-                console.error('Invalid content type:', contentTypeUid);
+                logger.error('Invalid content type:', contentTypeUid);
                 ctx.throw(400, 'Invalid content type');
             }
             
-            console.log('Content type found:', {
+            logger.debug('Content type found:', {
                 uid: contentType.uid,
                 displayName: contentType.info?.displayName,
                 attributes: Object.keys(contentType.attributes || {})
@@ -402,7 +400,7 @@ module.exports = {
             
             // Get all available fields from the content type
             const availableFields = Object.keys(contentType.attributes || {});
-            console.log('Available fields:', availableFields);
+            logger.debug('Available fields:', availableFields);
             
             // Build query with optional locale filter
             const query = {
@@ -426,18 +424,18 @@ module.exports = {
             // Try to get entries without specifying fields first (this should return all fields)
             let entries;
             try {
-                console.log('Trying to get entries without field specification');
+                logger.debug('Trying to get entries without field specification');
                 entries = await strapi.entityService.findMany(contentTypeUid, query);
             } catch (noFieldError) {
-                console.log('Error without field specification, trying with all fields:', noFieldError.message);
+                logger.debug('Error without field specification, trying with all fields:', noFieldError.message);
                 try {
-                    console.log('Trying to get entries with all fields:', availableFields);
+                    logger.debug('Trying to get entries with all fields:', availableFields);
                     entries = await strapi.entityService.findMany(contentTypeUid, {
                         ...query,
                         fields: availableFields
                     });
                 } catch (fieldError) {
-                    console.log('Error with all fields, trying with basic fields:', fieldError.message);
+                    logger.debug('Error with all fields, trying with basic fields:', fieldError.message);
                     // Fallback to basic fields if the above fails
                     entries = await strapi.entityService.findMany(contentTypeUid, {
                         ...query,
@@ -446,17 +444,17 @@ module.exports = {
                 }
             }
             
-            console.log('Raw entries found:', entries.length, entries);
+            logger.debug('Raw entries found:', entries.length, entries);
             
             // Transform entries to include a display title
             const transformedEntries = entries.map(entry => {
                 let title = '';
                 
-                console.log('Processing entry:', entry);
+                logger.debug('Processing entry:', entry);
                 
                 // Try to find a suitable title field (case-insensitive)
                 const entryKeys = Object.keys(entry);
-                console.log('Entry keys:', entryKeys);
+                logger.debug('Entry keys:', entryKeys);
                 
                 const titleKey = entryKeys.find(key => 
                     key.toLowerCase() === 'title' || 
@@ -466,15 +464,15 @@ module.exports = {
                     key.toLowerCase() === 'label'
                 );
                 
-                console.log('Found title key:', titleKey);
+                logger.debug('Found title key:', titleKey);
                 
                 if (titleKey) {
                     title = entry[titleKey];
-                    console.log('Using title from key:', titleKey, 'Value:', title);
+                    logger.debug('Using title from key:', titleKey, 'Value:', title);
                 } else {
                     // Fallback to ID if no title field found
                     title = `Entry ${entry.id}`;
-                    console.log('No title field found, using fallback:', title);
+                    logger.debug('No title field found, using fallback:', title);
                 }
                 
                 return {
@@ -484,10 +482,10 @@ module.exports = {
                 };
             });
             
-            console.log('Transformed entries:', transformedEntries);
+            logger.debug('Transformed entries:', transformedEntries);
             return transformedEntries;
         } catch (error) {
-            console.error('Error in getContentTypeEntries:', error);
+            logger.error('Error in getContentTypeEntries:', error);
             ctx.throw(500, error);
         }
     },
@@ -496,9 +494,9 @@ module.exports = {
             const { projectId } = ctx.params;
             const { selectedContent, sourceLanguage } = ctx.request.body;
             
-            console.log('Sending content to Gridly for project:', projectId);
-            console.log('Selected content:', selectedContent);
-            console.log('Source language:', sourceLanguage);
+            logger.debug('Sending content to Gridly for project:', projectId);
+            logger.debug('Selected content:', selectedContent);
+            logger.debug('Source language:', sourceLanguage);
             
             // Get the project to find the Gridly configuration
             const project = await strapi.plugin("gridly-integration").service("project").findOne(projectId);
@@ -572,7 +570,7 @@ module.exports = {
                 return;
             }
         } catch (error) {
-            console.error('Error sending content to Gridly:', error);
+            logger.error('Error sending content to Gridly:', error);
             ctx.status = 500;
             ctx.body = {
                 error: error.message || 'An unexpected error occurred',
@@ -603,7 +601,7 @@ module.exports = {
             
             return result;
         } catch (error) {
-            console.error('Error testing Gridly connection:', error);
+            logger.error('Error testing Gridly connection:', error);
             
             // If this is already a structured error from our code, pass it through
             if (error.message && (error.details || error.status)) {
@@ -658,7 +656,7 @@ module.exports = {
             
             return result;
         } catch (error) {
-            console.error('Error validating Gridly columns:', error);
+            logger.error('Error validating Gridly columns:', error);
             ctx.status = 500;
             ctx.body = {
                 error: error.message || 'An unexpected error occurred',
@@ -676,7 +674,7 @@ module.exports = {
         try {
             const { projectId } = ctx.params;
             
-            console.log('🔄 Syncing content to Gridly for project:', projectId);
+            logger.debug('🔄 Syncing content to Gridly for project:', projectId);
             
             // Get the project
             const project = await strapi.plugin("gridly-integration").service("project").findOne(projectId);
@@ -689,9 +687,47 @@ module.exports = {
                 return;
             }
             
+            // Check if a sync is already in progress (lock mechanism with 10-minute timeout)
+            const SYNC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+            if (project['sync-status'] === 'syncing') {
+                const syncStartedAt = project['sync-started-at'];
+                if (syncStartedAt) {
+                    const syncStartTime = new Date(syncStartedAt);
+                    const now = new Date();
+                    const timeSinceStart = now.getTime() - syncStartTime.getTime();
+                    
+                    if (timeSinceStart < SYNC_TIMEOUT_MS) {
+                        // Sync is still in progress (within timeout window)
+                        ctx.status = 409;
+                        ctx.body = {
+                            error: 'Sync already in progress',
+                            message: 'A sync is already in progress for this project. Please wait for it to complete.'
+                        };
+                        return;
+                    }
+                    // Sync has timed out (older than 10 minutes), allow new sync
+                    logger.warn(`Sync lock timeout detected for project ${projectId}. Allowing new sync.`);
+                }
+            }
+            
+            // Acquire lock: Set status to 'syncing' and record start time
+            await strapi.plugin("gridly-integration").service("project").update(projectId, {
+                data: {
+                    'sync-status': 'syncing',
+                    'sync-started-at': new Date().toISOString()
+                }
+            });
+            
             // Get the Gridly configuration - for now, get the first available config
             const gridlyConfigs = await strapi.plugin("gridly-integration").service("gridlyConfig").find();
             if (!gridlyConfigs || gridlyConfigs.length === 0) {
+                // Release lock before returning
+                await strapi.plugin("gridly-integration").service("project").update(projectId, {
+                    data: {
+                        'sync-status': 'not-synced',
+                        'sync-started-at': null
+                    }
+                });
                 ctx.status = 400;
                 ctx.body = {
                     error: 'No Gridly configuration found',
@@ -702,6 +738,13 @@ module.exports = {
             
             const gridlyConfig = gridlyConfigs[0]; // Use the first available config
             if (!gridlyConfig) {
+                // Release lock before returning
+                await strapi.plugin("gridly-integration").service("project").update(projectId, {
+                    data: {
+                        'sync-status': 'not-synced',
+                        'sync-started-at': null
+                    }
+                });
                 ctx.status = 404;
                 ctx.body = {
                     error: 'Gridly configuration not found',
@@ -712,6 +755,13 @@ module.exports = {
             
             // Check if project has selected content
             if (!project['selected-content'] || project['selected-content'].length === 0) {
+                // Release lock before returning
+                await strapi.plugin("gridly-integration").service("project").update(projectId, {
+                    data: {
+                        'sync-status': 'not-synced',
+                        'sync-started-at': null
+                    }
+                });
                 ctx.status = 400;
                 ctx.body = {
                     error: 'No content selected for sync',
@@ -727,33 +777,33 @@ module.exports = {
             
             // If project doesn't have targetLanguages stored, try to get from subprojects
             if (!targetLanguages || targetLanguages.length === 0) {
-                console.log('📋 Project has no targetLanguages stored, checking subprojects...');
+                logger.debug('📋 Project has no targetLanguages stored, checking subprojects...');
                 if (project.subprojects && project.subprojects.length > 0) {
                     targetLanguages = project.subprojects.map(subproject => subproject['target-language']).filter(Boolean);
-                    console.log('📋 Target languages from subprojects:', targetLanguages);
+                    logger.debug('📋 Target languages from subprojects:', targetLanguages);
                 }
             }
             
             // If still no target languages, use default
             if (!targetLanguages || targetLanguages.length === 0) {
                 targetLanguages = ['de-DE', 'sv-SE']; // Default target languages
-                console.log('📋 Using default target languages:', targetLanguages);
+                logger.debug('📋 Using default target languages:', targetLanguages);
             }
             
-            console.log('📋 Project targetLanguages field:', project['targetLanguages']);
-            console.log('📋 Original target languages:', targetLanguages);
-            console.log('📋 Source language:', project['source-language']);
-            console.log('📋 Target languages type:', typeof targetLanguages);
-            console.log('📋 Target languages is array:', Array.isArray(targetLanguages));
+            logger.debug('📋 Project targetLanguages field:', project['targetLanguages']);
+            logger.debug('📋 Original target languages:', targetLanguages);
+            logger.debug('📋 Source language:', project['source-language']);
+            logger.debug('📋 Target languages type:', typeof targetLanguages);
+            logger.debug('📋 Target languages is array:', Array.isArray(targetLanguages));
             
             // Ensure source language is not in target languages
             const filteredTargetLanguages = targetLanguages.filter(lang => lang !== project['source-language']);
             
-            console.log('📋 Filtered target languages:', filteredTargetLanguages);
-            console.log('📋 Filtered target languages length:', filteredTargetLanguages.length);
+            logger.debug('📋 Filtered target languages:', filteredTargetLanguages);
+            logger.debug('📋 Filtered target languages length:', filteredTargetLanguages.length);
             
             // First, validate and create required columns (without dependencies)
-            console.log('🔍 Validating Gridly view columns...');
+            logger.debug('🔍 Validating Gridly view columns...');
             const columnValidation = await gridlyApiService.validateAndCreateMetadataColumns(
                 gridlyConfig, 
                 project['source-language'], 
@@ -762,18 +812,18 @@ module.exports = {
             );
             
             if (!columnValidation.success) {
-                console.error('❌ Column validation failed:', columnValidation.error);
+                logger.error('❌ Column validation failed:', columnValidation.error);
                 throw new Error(`Gridly column validation failed: ${columnValidation.error}`);
             }
             
-            console.log('✅ Column validation completed:', columnValidation.message);
+            logger.debug('✅ Column validation completed:', columnValidation.message);
 
             // Then validate and create dependencies (same as project creation)
-            console.log('🔗 Validating Gridly dependencies...');
-            console.log('📋 Source language:', project['source-language']);
-            console.log('📋 Filtered target languages:', filteredTargetLanguages);
-            console.log('📋 Formatted source language:', gridlyApiService.formatLanguageCode(project['source-language']));
-            console.log('📋 Formatted target languages:', filteredTargetLanguages.map(lang => gridlyApiService.formatLanguageCode(lang)));
+            logger.debug('🔗 Validating Gridly dependencies...');
+            logger.debug('📋 Source language:', project['source-language']);
+            logger.debug('📋 Filtered target languages:', filteredTargetLanguages);
+            logger.debug('📋 Formatted source language:', gridlyApiService.formatLanguageCode(project['source-language']));
+            logger.debug('📋 Formatted target languages:', filteredTargetLanguages.map(lang => gridlyApiService.formatLanguageCode(lang)));
             
             const dependencyValidation = await gridlyApiService.validateAndCreateDependencies(
                 gridlyConfig,
@@ -781,7 +831,7 @@ module.exports = {
                 filteredTargetLanguages.map(lang => gridlyApiService.formatLanguageCode(lang))
             );
             
-            console.log('📋 Dependency validation result:', {
+            logger.debug('📋 Dependency validation result:', {
                 success: dependencyValidation.success,
                 message: dependencyValidation.message,
                 createdDependencies: dependencyValidation.createdDependencies,
@@ -789,11 +839,11 @@ module.exports = {
             });
             
             if (!dependencyValidation.success) {
-                console.error('❌ Dependency validation failed:', dependencyValidation.error);
+                logger.error('❌ Dependency validation failed:', dependencyValidation.error);
                 throw new Error(`Gridly dependency validation failed: ${dependencyValidation.error}`);
             }
             
-            console.log('✅ Dependency validation completed:', dependencyValidation.message);
+            logger.debug('✅ Dependency validation completed:', dependencyValidation.message);
             
             // Now send content to Gridly
             const result = await gridlyApiService.sendContentToGridly(
@@ -803,7 +853,7 @@ module.exports = {
             );
             
             if (result.success) {
-                console.log('✅ Sync completed successfully');
+                logger.debug('✅ Sync completed successfully');
                 
                 // Calculate translation tasks (records × languages)
                 const totalTranslationTasks = filteredTargetLanguages.length > 0 
@@ -812,65 +862,67 @@ module.exports = {
                 const tasksPerLanguage = filteredTargetLanguages.length > 0 
                     ? result.recordsCount
                     : result.recordsCount;
-                console.log('📊 Total translation tasks:', totalTranslationTasks);
-                console.log('📊 Tasks per language:', tasksPerLanguage);
-                console.log('📋 Number of target languages:', filteredTargetLanguages.length);
+                logger.debug('📊 Total translation tasks:', totalTranslationTasks);
+                logger.debug('📊 Tasks per language:', tasksPerLanguage);
+                logger.debug('📋 Number of target languages:', filteredTargetLanguages.length);
                 
                 // Update project with sync information and total translation tasks count
                 await strapi.plugin("gridly-integration").service("project").update(projectId, {
                     data: {
                         'last-sync': new Date().toISOString(),
+                        'sync-status': 'completed',
+                        'sync-started-at': null, // Clear lock
                         'records-sent': result.recordsCount,
                         'total-records': totalTranslationTasks // Update total translation tasks count
                     }
                 });
                 
                 // Update subprojects with their language-specific record counts
-                console.log('🔍 Sync subproject update check:');
-                console.log('  - Has subprojects:', !!project.subprojects);
-                console.log('  - Subprojects length:', project.subprojects?.length || 0);
-                console.log('  - Filtered target languages length:', filteredTargetLanguages?.length || 0);
-                console.log('  - Tasks per language:', tasksPerLanguage);
+                logger.debug('🔍 Sync subproject update check:');
+                logger.debug('  - Has subprojects:', !!project.subprojects);
+                logger.debug('  - Subprojects length:', project.subprojects?.length || 0);
+                logger.debug('  - Filtered target languages length:', filteredTargetLanguages?.length || 0);
+                logger.debug('  - Tasks per language:', tasksPerLanguage);
                 
                 if (project.subprojects && project.subprojects.length > 0 && filteredTargetLanguages.length > 0) {
-                    console.log('📊 Using target language distribution for subprojects');
+                    logger.debug('📊 Using target language distribution for subprojects');
                     for (const subproject of project.subprojects) {
-                        console.log(`  - Updating subproject ${subproject.id} with ${tasksPerLanguage} translation tasks`);
+                        logger.debug(`  - Updating subproject ${subproject.id} with ${tasksPerLanguage} translation tasks`);
                         await strapi.plugin("gridly-integration").service("subproject").update(subproject.id, {
                             data: {
                                 'number-of-records': tasksPerLanguage
                             }
                         });
                     }
-                    console.log('✅ Updated subproject translation task counts');
+                    logger.debug('✅ Updated subproject translation task counts');
                 } else {
-                    console.log('⚠️ No subprojects or target languages to update');
+                    logger.debug('⚠️ No subprojects or target languages to update');
                     
                     // Fallback: Update subprojects with equal distribution of total translation tasks
                     if (project.subprojects && project.subprojects.length > 0) {
                         const tasksPerSubproject = Math.ceil(totalTranslationTasks / project.subprojects.length);
-                        console.log('📊 Fallback: Translation tasks per subproject:', tasksPerSubproject);
+                        logger.debug('📊 Fallback: Translation tasks per subproject:', tasksPerSubproject);
                         
                         for (const subproject of project.subprojects) {
-                            console.log(`  - Updating subproject ${subproject.id} with ${tasksPerSubproject} translation tasks (fallback)`);
+                            logger.debug(`  - Updating subproject ${subproject.id} with ${tasksPerSubproject} translation tasks (fallback)`);
                             await strapi.plugin("gridly-integration").service("subproject").update(subproject.id, {
                                 data: {
                                     'number-of-records': tasksPerSubproject
                                 }
                             });
                         }
-                                        console.log('✅ Updated subproject translation task counts (fallback)');
+                                        logger.debug('✅ Updated subproject translation task counts (fallback)');
             }
         }
 
         // Update progress from Gridly as the final step
-        console.log('🔄 Updating progress from Gridly...');
+        logger.info('Updating progress from Gridly...');
         const progressResult = await gridlyApiService.updateProjectProgress(gridlyConfig, projectId);
         
         if (progressResult.success) {
-            console.log('✅ Progress updated successfully:', progressResult.overallProgress + '%');
+            logger.debug('✅ Progress updated successfully:', progressResult.overallProgress + '%');
         } else {
-            console.warn('⚠️ Failed to update progress:', progressResult.error);
+            logger.warn('⚠️ Failed to update progress:', progressResult.error);
         }
         
         return {
@@ -881,9 +933,11 @@ module.exports = {
             progressUpdate: progressResult
         };
             } else {
-                // Update project with error information (but don't update last-sync)
+                // Update project with error information and release lock
                 await strapi.plugin("gridly-integration").service("project").update(projectId, {
                     data: {
+                        'sync-status': 'failed',
+                        'sync-started-at': null, // Clear lock
                         'sync-error': result.error
                     }
                 });
@@ -897,7 +951,21 @@ module.exports = {
                 return;
             }
         } catch (error) {
-            console.error('Error syncing to Gridly:', error);
+            logger.error('Error syncing to Gridly:', error);
+            
+            // Release lock on error
+            try {
+                await strapi.plugin("gridly-integration").service("project").update(projectId, {
+                    data: {
+                        'sync-status': 'failed',
+                        'sync-started-at': null, // Clear lock
+                        'sync-error': error.message || 'An unexpected error occurred'
+                    }
+                });
+            } catch (updateError) {
+                logger.error('Failed to release sync lock:', updateError);
+            }
+            
             ctx.status = 500;
             ctx.body = {
                 error: error.message || 'An unexpected error occurred',
@@ -916,9 +984,9 @@ module.exports = {
             const { configId } = ctx.params;
             const { sourceLanguage, targetLanguages } = ctx.request.body;
             
-            console.log('🔗 Validating Gridly dependencies for config:', configId);
-            console.log('📋 Source language:', sourceLanguage);
-            console.log('📋 Target languages:', targetLanguages);
+            logger.debug('🔗 Validating Gridly dependencies for config:', configId);
+            logger.debug('📋 Source language:', sourceLanguage);
+            logger.debug('📋 Target languages:', targetLanguages);
             
             // Get the Gridly configuration
             const gridlyConfig = await strapi.plugin("gridly-integration").service("gridlyConfig").findOne(configId);
@@ -941,7 +1009,7 @@ module.exports = {
             
             return result;
         } catch (error) {
-            console.error('Error validating Gridly dependencies:', error);
+            logger.error('Error validating Gridly dependencies:', error);
             ctx.status = 500;
             ctx.body = {
                 error: error.message || 'An unexpected error occurred',
@@ -959,7 +1027,7 @@ module.exports = {
         try {
             const { projectId } = ctx.params;
             
-            console.log('🔄 Updating progress from Gridly for project:', projectId);
+            logger.debug('🔄 Updating progress from Gridly for project:', projectId);
             
             // Get the project to find the Gridly configuration
             const project = await strapi.plugin("gridly-integration").service("project").findOne(projectId);
@@ -1004,7 +1072,7 @@ module.exports = {
                 return;
             }
         } catch (error) {
-            console.error('Error updating progress from Gridly:', error);
+            logger.error('Error updating progress from Gridly:', error);
             ctx.status = 500;
             ctx.body = {
                 error: error.message || 'An unexpected error occurred',
@@ -1023,8 +1091,8 @@ module.exports = {
             const { projectId } = ctx.params;
             const { targetLanguages } = ctx.request.body;
             
-            console.log('🔄 Importing content from Gridly for project:', projectId);
-            console.log('📋 Target languages:', targetLanguages);
+            logger.debug('🔄 Importing content from Gridly for project:', projectId);
+            logger.debug('📋 Target languages:', targetLanguages);
             
             // Get the project to find the Gridly configuration
             const project = await strapi.plugin("gridly-integration").service("project").findOne(projectId);
@@ -1054,11 +1122,11 @@ module.exports = {
             
             // If no specific config is set or found, use the first available config
             if (!gridlyConfig) {
-                console.log('⚠️ No specific Gridly config found, using first available config');
+                logger.debug('⚠️ No specific Gridly config found, using first available config');
                 const allConfigs = await strapi.plugin("gridly-integration").service("gridlyConfig").find();
                 if (allConfigs && allConfigs.length > 0) {
                     gridlyConfig = allConfigs[0];
-                    console.log('✅ Using first available Gridly config:', gridlyConfig.id);
+                    logger.debug('✅ Using first available Gridly config:', gridlyConfig.id);
                 } else {
                     ctx.status = 404;
                     ctx.body = {
@@ -1112,7 +1180,7 @@ module.exports = {
                 return;
             }
         } catch (error) {
-            console.error('Error importing from Gridly:', error);
+            logger.error('Error importing from Gridly:', error);
             ctx.status = 500;
             ctx.body = {
                 error: error.message || 'An unexpected error occurred',
@@ -1123,55 +1191,9 @@ module.exports = {
         }
     },
 
-    async cleanupDuplicateEntries(ctx) {
-        try {
-            console.log('🧹 Starting cleanup of duplicate German entries...');
-            
-            // Get all German entries
-            const germanEntries = await strapi.entityService.findMany('api::page.page', {
-                filters: {
-                    locale: 'de-DE'
-                },
-                sort: { createdAt: 'desc' }
-            });
-            
-            console.log(`📋 Found ${germanEntries.length} German entries`);
-            
-            // Find entries with "TEST TITLE IN GERMAN CHANGED" (our import entries)
-            const importEntries = germanEntries.filter(entry => 
-                entry.Title === 'TEST TITLE IN GERMAN CHANGED'
-            );
-            
-            console.log(`📋 Found ${importEntries.length} import entries to clean up`);
-            
-            // Delete the import entries
-            for (const entry of importEntries) {
-                console.log(`🗑️ Deleting entry ${entry.id}: ${entry.Title}`);
-                await strapi.entityService.delete('api::page.page', entry.id);
-            }
-            
-            console.log('✅ Cleanup completed successfully');
-            console.log(`🗑️ Deleted ${importEntries.length} duplicate entries`);
-            
-            return {
-                success: true,
-                message: `Successfully deleted ${importEntries.length} duplicate entries`,
-                deletedCount: importEntries.length
-            };
-            
-        } catch (error) {
-            console.error('❌ Error during cleanup:', error);
-            ctx.status = 500;
-            ctx.body = {
-                error: error.message,
-                message: 'Failed to cleanup duplicate entries'
-            };
-        }
-    },
-
     async updateExistingProjectsWithConfig(ctx) {
         try {
-            console.log('🔄 Updating existing projects with Gridly configuration...');
+            logger.debug('🔄 Updating existing projects with Gridly configuration...');
             
             // Get all projects
             const projects = await strapi.plugin("gridly-integration").service("project").find();
@@ -1180,7 +1202,7 @@ module.exports = {
             for (const project of projects) {
                 // Check if project already has gridly-config-id
                 if (project['gridly-config-id']) {
-                    console.log(`✅ Project ${project.id} already has gridly-config-id: ${project['gridly-config-id']}`);
+                    logger.debug(`✅ Project ${project.id} already has gridly-config-id: ${project['gridly-config-id']}`);
                     continue;
                 }
                 
@@ -1206,20 +1228,20 @@ module.exports = {
                             await strapi.plugin("gridly-integration").service("project").update(project.id, {
                                 data: { 'gridly-config-id': matchingConfig.id }
                             });
-                            console.log(`✅ Updated project ${project.id} with gridly-config-id: ${matchingConfig.id}`);
+                            logger.debug(`✅ Updated project ${project.id} with gridly-config-id: ${matchingConfig.id}`);
                             updatedCount++;
                         } else {
-                            console.log(`⚠️ No matching Gridly config found for project ${project.id}`);
+                            logger.debug(`⚠️ No matching Gridly config found for project ${project.id}`);
                         }
                     } else {
-                        console.log(`⚠️ No subproject with Gridly config found for project ${project.id}`);
+                        logger.debug(`⚠️ No subproject with Gridly config found for project ${project.id}`);
                     }
                 } else {
-                    console.log(`⚠️ No subprojects found for project ${project.id}`);
+                    logger.debug(`⚠️ No subprojects found for project ${project.id}`);
                 }
             }
             
-            console.log(`✅ Updated ${updatedCount} projects with Gridly configuration`);
+            logger.debug(`✅ Updated ${updatedCount} projects with Gridly configuration`);
             
             return {
                 success: true,
@@ -1227,8 +1249,9 @@ module.exports = {
                 updatedCount
             };
         } catch (error) {
-            console.error('❌ Error updating projects with Gridly configuration:', error);
+            logger.error('❌ Error updating projects with Gridly configuration:', error);
             ctx.throw(500, error);
         }
     }
+  };
 };
